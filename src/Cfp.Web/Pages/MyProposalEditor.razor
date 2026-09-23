@@ -1,0 +1,544 @@
+﻿@page "/my/proposals/new"
+@page "/my/proposals/{ProposalId}"
+@attribute [Authorize]
+@inject CfpProtectedApiClient ProtectedApi
+@inject CfpApiClient PublicApi
+@inject NavigationManager Navigation
+
+<PageTitle>@(_proposal is null ? "応募を作成" : GetTitle()) | カンファレンス CFP</PageTitle>
+
+<p class="breadcrumb">
+    <a href="/my/proposals">自分の応募</a>
+    <span aria-hidden="true">/</span>
+    <span>@(_proposal is null ? "新規作成" : GetTitle())</span>
+</p>
+
+@if (_isLoading)
+{
+    <p class="state-message" role="status" aria-live="polite">応募フォームを読み込んでいます…</p>
+}
+else if (_errorMessage is not null && _fields.Count == 0)
+{
+    <div class="error-panel" role="alert">
+        <div><h1>応募フォームを表示できません</h1><p>@_errorMessage</p></div>
+        <a class="secondary-button" href="/my/proposals">応募一覧へ戻る</a>
+    </div>
+}
+else
+{
+    <section class="form-page" aria-labelledby="proposal-editor-heading">
+        <p class="eyebrow">SPEAKER SUBMISSION</p>
+        <h1 id="proposal-editor-heading">@(_proposal is null ? "応募を作成" : GetTitle())</h1>
+        <p class="form-intro">
+            カンファレンス: @_conferenceTitle
+            @if (_proposalType is not null)
+            {
+                <span> / @_proposalType.Name (@_proposalType.DurationMinutes 分)</span>
+            }
+        </p>
+
+        @if (_proposal is not null)
+        {
+            <p class="status-pill @GetStatusClass(_proposal.Status)">@GetStatusText(_proposal.Status)</p>
+        }
+
+        @if (_validationErrors.Count > 0)
+        {
+            <div class="error-panel" role="alert" aria-labelledby="proposal-errors-heading">
+                <h2 id="proposal-errors-heading">入力内容を確認してください</h2>
+                <ul>
+                    @foreach (var error in _validationErrors)
+                    {
+                        <li>@error</li>
+                    }
+                </ul>
+            </div>
+        }
+        @if (_errorMessage is not null)
+        {
+            <div class="error-panel" role="alert"><p>@_errorMessage</p></div>
+        }
+        @if (_statusMessage is not null)
+        {
+            <p class="state-message" role="status" aria-live="polite">@_statusMessage</p>
+        }
+
+        <div class="form-layout">
+            @foreach (var field in _fields)
+            {
+                <div class="form-field">
+                    <label for="@($"proposal-field-{field.Id}")">
+                        @field.Label
+                        @if (field.IsRequired)
+                        {
+                            <span class="required-label">必須</span>
+                        }
+                    </label>
+                    @switch (field.Kind)
+                    {
+                        case "LongText":
+                            <textarea id="@($"proposal-field-{field.Id}")"
+                                      rows="6"
+                                      maxlength="@field.MaximumLength"
+                                      @bind="_answers[field.Id]"></textarea>
+                            break;
+                        case "SingleChoice":
+                            <div class="choice-list" role="radiogroup" aria-label="@field.Label">
+                                @foreach (var option in field.Options ?? [])
+                                {
+                                    var selectedOption = option;
+                                    var optionId = GetOptionId(field.Id, selectedOption);
+                                    <div class="choice-item">
+                                        <input id="@optionId" type="radio" name="@field.Id" value="@selectedOption"
+                                               checked="@IsSelected(field.Id, selectedOption)"
+                                               @onchange="() => SetSingleChoice(field.Id, selectedOption)" />
+                                        <label for="@optionId">@selectedOption</label>
+                                    </div>
+                                }
+                            </div>
+                            break;
+                        case "MultipleChoice":
+                            <div class="choice-list">
+                                @foreach (var option in field.Options ?? [])
+                                {
+                                    var selectedOption = option;
+                                    var optionId = GetOptionId(field.Id, selectedOption);
+                                    <div class="choice-item">
+                                        <input id="@optionId" type="checkbox"
+                                               checked="@IsSelected(field.Id, selectedOption)"
+                                               @onchange="() => ToggleChoice(field.Id, selectedOption)" />
+                                        <label for="@optionId">@selectedOption</label>
+                                    </div>
+                                }
+                            </div>
+                            break;
+                        default:
+                            <input id="@($"proposal-field-{field.Id}")" type="text"
+                                   maxlength="@field.MaximumLength" @bind="_answers[field.Id]" />
+                            break;
+                    }
+                </div>
+            }
+
+            @if (!_isReadOnly)
+            {
+                <div class="form-actions">
+                    @if (_proposal is not null && _proposal.Status is ("Submitted" or "UnderReview"))
+                    {
+                        <button class="secondary-button" type="button" @onclick="WithdrawAsync" disabled="@_isSaving">
+                            応募を取り下げる
+                        </button>
+                    }
+                    @if (_proposal is null || _proposal.Status == "Draft")
+                    {
+                        <button class="secondary-button" type="button" @onclick="SaveDraftAsync" disabled="@_isSaving">
+                            下書きを保存
+                        </button>
+                        <button class="primary-button" type="button" @onclick="SubmitAsync" disabled="@_isSaving">
+                            @_isSaving ? "処理中…" : "入力内容を提出"
+                        </button>
+                    }
+                    else if (_proposal.Status == "Submitted")
+                    {
+                        <button class="primary-button" type="button" @onclick="SaveDraftAsync" disabled="@_isSaving">
+                            変更を保存
+                        </button>
+                    }
+                </div>
+            }
+            else
+            {
+                <p class="state-message">現在の状態では応募内容を編集できません。</p>
+            }
+        </div>
+
+        @if (_proposal?.Status == "Accepted")
+        {
+            <section class="consent-panel" aria-labelledby="proposal-publication-heading">
+                <p class="eyebrow">PUBLICATION CONSENT</p>
+                <h2 id="proposal-publication-heading">採択プロポーザルの公開</h2>
+                @if (_proposal.PublicationConsentConfirmed)
+                {
+                    <p class="state-message">公開同意を確認済みです。Organizer の個別公開後に公開されます。</p>
+                    <button class="secondary-button" type="button" @onclick="() => SetPublicationConsentAsync(false)" disabled="@_isSaving">
+                        公開同意を撤回する
+                    </button>
+                }
+                else
+                {
+                    <p class="field-help">
+                        タイトル、概要、登壇者名が公開されます。共同登壇者全員の同意を得たことを確認してください。
+                        同意を撤回すると自サービスから直ちに非公開になります。外部 SNS の preview cache は即時消去できません。
+                    </p>
+                    <div class="checkbox-field">
+                        <input id="all-speakers-consent" type="checkbox" @bind="_allSpeakersConsentConfirmed" />
+                        <label for="all-speakers-consent">共同登壇者全員の公開同意を確認しました</label>
+                    </div>
+                    <button class="primary-button" type="button" @onclick="() => SetPublicationConsentAsync(true)"
+                            disabled="@(_isSaving || !_allSpeakersConsentConfirmed)">
+                        公開に同意する
+                    </button>
+                }
+            </section>
+        }
+    </section>
+}
+
+@code {
+    [Parameter]
+    public string? ProposalId { get; set; }
+
+    [SupplyParameterFromQuery(Name = "conferenceId")]
+    public string? ConferenceId { get; set; }
+
+    [SupplyParameterFromQuery(Name = "conferenceSlug")]
+    public string? ConferenceSlug { get; set; }
+
+    [SupplyParameterFromQuery(Name = "proposalTypeId")]
+    public string? ProposalTypeId { get; set; }
+
+    private readonly Dictionary<string, string> _answers = new(StringComparer.Ordinal);
+    private List<ProposalFormFieldDto> _fields = [];
+    private PublicConferenceDto? _conference;
+    private PublicProposalTypeDto? _proposalType;
+    private ProposalDto? _proposal;
+    private string? _etag;
+    private string _conferenceTitle = string.Empty;
+    private string? _errorMessage;
+    private string? _statusMessage;
+    private readonly List<string> _validationErrors = [];
+    private bool _isLoading = true;
+    private bool _isSaving;
+    private Guid _idempotencyKey = Guid.NewGuid();
+    private bool _allSpeakersConsentConfirmed;
+    private bool _isReadOnly => _proposal?.Status is "Accepted" or "Rejected" or "Withdrawn";
+
+    protected override Task OnParametersSetAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _isLoading = true;
+        _errorMessage = null;
+        _validationErrors.Clear();
+        try
+        {
+            if (string.IsNullOrWhiteSpace(ConferenceId))
+            {
+                _errorMessage = "応募に必要なカンファレンス情報がありません。募集ページから開始してください。";
+                return;
+            }
+
+            if (!string.IsNullOrWhiteSpace(ProposalId))
+            {
+                _proposal = await ProtectedApi.GetMyProposalAsync(ConferenceId, ProposalId);
+                _etag = _proposal.ETag;
+                ProposalTypeId = _proposal.ProposalTypeId;
+                ConferenceSlug = _proposal.ConferenceSlug;
+                _conferenceTitle = _proposal.ConferenceTitle;
+                _fields = _proposal.FormFields;
+                foreach (var pair in _proposal.Answers)
+                {
+                    _answers[pair.Key] = pair.Value;
+                }
+                foreach (var field in _fields)
+                {
+                    _answers.TryAdd(field.Id, string.Empty);
+                }
+            }
+            else
+            {
+                if (string.IsNullOrWhiteSpace(ConferenceSlug) ||
+                    string.IsNullOrWhiteSpace(ProposalTypeId))
+                {
+                    _errorMessage = "応募種別が指定されていません。公開募集ページから応募を開始してください。";
+                    return;
+                }
+
+                _conference = await PublicApi.GetPublicConferenceAsync(ConferenceSlug);
+                _conferenceTitle = _conference.Title;
+                var result = await PublicApi.ListPublicProposalTypesAsync(ConferenceSlug);
+                _proposalType = result.ProposalTypes.SingleOrDefault(type => type.Id == ProposalTypeId);
+                if (_proposalType is null || !_proposalType.IsAcceptingSubmissions ||
+                    _conference.CfpAvailability != "Open")
+                {
+                    _errorMessage = "この募集種別は現在応募を受け付けていません。";
+                    return;
+                }
+
+                _fields = _proposalType.Fields;
+                foreach (var field in _fields)
+                {
+                    _answers.TryAdd(field.Id, string.Empty);
+                }
+            }
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (CfpApiException exception)
+        {
+            _errorMessage = exception.UserMessage;
+        }
+        catch (HttpRequestException)
+        {
+            _errorMessage = "通信に失敗しました。接続を確認して、もう一度お試しください。";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task SaveDraftAsync()
+    {
+        await SaveAsync(submit: false);
+    }
+
+    private async Task SubmitAsync()
+    {
+        await SaveAsync(submit: true);
+    }
+
+    private async Task SaveAsync(bool submit)
+    {
+        _isSaving = true;
+        _errorMessage = null;
+        _statusMessage = null;
+        _validationErrors.Clear();
+
+        if (submit)
+        {
+            _validationErrors.AddRange(ValidateAnswers());
+            if (_validationErrors.Count > 0)
+            {
+                _isSaving = false;
+                return;
+            }
+        }
+
+        try
+        {
+            if (_proposal is null)
+            {
+                _proposal = await ProtectedApi.CreateProposalDraftAsync(
+                    ConferenceId!,
+                    new ProposalDraftRequestDto
+                    {
+                        ProposalTypeId = ProposalTypeId!,
+                        Answers = new Dictionary<string, string>(_answers, StringComparer.Ordinal)
+                    },
+                    _idempotencyKey);
+                _etag = _proposal.ETag;
+                _fields = _proposal.FormFields;
+                _conferenceTitle = _proposal.ConferenceTitle;
+                ConferenceSlug = _proposal.ConferenceSlug;
+            }
+            else
+            {
+                _proposal = await ProtectedApi.UpdateMyProposalAsync(
+                    ConferenceId!,
+                    _proposal.Id,
+                    new UpdateProposalRequestDto
+                    {
+                        Answers = new Dictionary<string, string>(_answers, StringComparer.Ordinal)
+                    },
+                    _etag!);
+                _etag = _proposal.ETag;
+            }
+
+            if (submit)
+            {
+                _proposal = await ProtectedApi.SubmitMyProposalAsync(
+                    ConferenceId!,
+                    _proposal.Id,
+                    _etag!);
+                _etag = _proposal.ETag;
+                _statusMessage = "応募を提出しました。受付メールは別途配信されます。";
+            }
+            else
+            {
+                _statusMessage = "下書きを保存しました。";
+            }
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (CfpApiException exception)
+        {
+            _errorMessage = exception.UserMessage;
+        }
+        catch (HttpRequestException)
+        {
+            _errorMessage = "通信に失敗しました。保存結果が不明な場合は応募一覧を再読み込みしてください。";
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    private async Task WithdrawAsync()
+    {
+        if (_proposal is null || _etag is null)
+        {
+            return;
+        }
+
+        _isSaving = true;
+        _errorMessage = null;
+        try
+        {
+            _proposal = await ProtectedApi.WithdrawMyProposalAsync(
+                ConferenceId!,
+                _proposal.Id,
+                _etag);
+            _etag = _proposal.ETag;
+            _statusMessage = "応募を取り下げました。";
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (CfpApiException exception)
+        {
+            _errorMessage = exception.UserMessage;
+        }
+        catch (HttpRequestException)
+        {
+            _errorMessage = "通信に失敗しました。保存結果が不明な場合は応募一覧を再読み込みしてください。";
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    private async Task SetPublicationConsentAsync(bool confirmed)
+    {
+        if (_proposal is null || _etag is null)
+        {
+            return;
+        }
+
+        _isSaving = true;
+        _errorMessage = null;
+        _statusMessage = null;
+        try
+        {
+            _proposal = await ProtectedApi.SetProposalPublicationConsentAsync(
+                ConferenceId!,
+                _proposal.Id,
+                confirmed,
+                _etag);
+            _etag = _proposal.ETag;
+            _allSpeakersConsentConfirmed = false;
+            _statusMessage = confirmed
+                ? "公開同意を記録しました。Organizer の個別公開後に公開されます。"
+                : "公開同意を撤回しました。自サービス上の公開は解除されました。";
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (CfpApiException exception)
+        {
+            _errorMessage = exception.UserMessage;
+        }
+        catch (HttpRequestException)
+        {
+            _errorMessage = "通信に失敗しました。保存結果が不明な場合は再読み込みしてください。";
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    private IReadOnlyList<string> ValidateAnswers()
+    {
+        var errors = new List<string>();
+        foreach (var field in _fields)
+        {
+            _answers.TryGetValue(field.Id, out var value);
+            value ??= string.Empty;
+            if (field.IsRequired && string.IsNullOrWhiteSpace(value))
+            {
+                errors.Add($"{field.Label} は必須です。");
+                continue;
+            }
+
+            if (field.MaximumLength is > 0 && value.Length > field.MaximumLength)
+            {
+                errors.Add($"{field.Label} は {field.MaximumLength} 文字以内で入力してください。");
+            }
+
+            if (field.Kind is "SingleChoice" or "MultipleChoice" && !string.IsNullOrWhiteSpace(value))
+            {
+                var selected = field.Kind == "SingleChoice"
+                    ? [value]
+                    : value.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                if (selected.Any(option => field.Options?.Contains(option, StringComparer.Ordinal) != true))
+                {
+                    errors.Add($"{field.Label} の選択肢を確認してください。");
+                }
+            }
+        }
+
+        return errors;
+    }
+
+    private string GetAnswer(string fieldId) =>
+        _answers.TryGetValue(fieldId, out var value) ? value : string.Empty;
+
+    private void SetAnswer(string fieldId, string? value) =>
+        _answers[fieldId] = value ?? string.Empty;
+
+    private bool IsSelected(string fieldId, string option) =>
+        GetAnswer(fieldId).Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Contains(option, StringComparer.Ordinal);
+
+    private void SetSingleChoice(string fieldId, string option) => _answers[fieldId] = option;
+
+    private void ToggleChoice(string fieldId, string option)
+    {
+        var selected = GetAnswer(fieldId)
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToHashSet(StringComparer.Ordinal);
+        if (!selected.Add(option))
+        {
+            selected.Remove(option);
+        }
+
+        _answers[fieldId] = string.Join('\n', selected);
+    }
+
+    private static string GetOptionId(string fieldId, string option) =>
+        $"option-{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes($"{fieldId}\n{option}")))[..16].ToLowerInvariant()}";
+
+    private string GetTitle() =>
+        _proposal is not null && _proposal.Answers.TryGetValue("title", out var title) && !string.IsNullOrWhiteSpace(title)
+            ? title
+            : "応募内容";
+
+    private static string GetStatusText(string status) => status switch
+    {
+        "Draft" => "下書き",
+        "Submitted" => "提出済み",
+        "UnderReview" => "審査中",
+        "Accepted" => "採択",
+        "Rejected" => "不採択",
+        "Withdrawn" => "取り下げ",
+        _ => "状態不明"
+    };
+
+    private static string GetStatusClass(string status) => status switch
+    {
+        "Accepted" => "status-pill status-open",
+        "Submitted" or "UnderReview" => "status-pill status-scheduled",
+        "Rejected" or "Withdrawn" => "status-pill status-closed",
+        _ => "status-pill status-unpublished"
+    };
+}

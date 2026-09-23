@@ -1,0 +1,117 @@
+﻿@page "/c/{Slug}/proposals"
+@inject CfpApiClient Api
+
+<PageTitle>採択プロポーザル | カンファレンス CFP</PageTitle>
+
+<p class="breadcrumb">
+    <a href="@($"/c/{Uri.EscapeDataString(Slug)}")">カンファレンス概要</a>
+    <span aria-hidden="true">/</span>
+    <span>採択プロポーザル</span>
+</p>
+
+@if (_isLoading)
+{
+    <p class="state-message" role="status" aria-live="polite">採択プロポーザルを読み込んでいます…</p>
+}
+else if (_errorMessage is not null)
+{
+    <div class="error-panel" role="alert">
+        <div><h1>採択プロポーザルを表示できません</h1><p>@_errorMessage</p></div>
+        <a class="secondary-button" href="@($"/c/{Uri.EscapeDataString(Slug)}")">概要へ戻る</a>
+    </div>
+}
+else if (_proposals.Count == 0)
+{
+    <div class="empty-panel">
+        <span class="empty-icon" aria-hidden="true">○</span>
+        <h1>公開中のプロポーザルはありません</h1>
+        <p>主催者が公開した採択プロポーザルがここに表示されます。</p>
+    </div>
+}
+else
+{
+    <section class="cfp-page" aria-labelledby="public-proposals-heading">
+        <p class="eyebrow">PUBLIC SHOWCASE</p>
+        <div class="section-heading">
+            <h1 id="public-proposals-heading">@_proposals[0].ConferenceTitle の採択プロポーザル</h1>
+            <span class="result-count">@_proposals.Count 件を表示</span>
+        </div>
+        <div class="proposal-type-list">
+            @foreach (var proposal in _proposals)
+            {
+                <article class="proposal-type-card">
+                    <h2><a href="@($"/c/{Uri.EscapeDataString(Slug)}/proposals/{Uri.EscapeDataString(proposal.Id)}")">@proposal.Title</a></h2>
+                    @if (!string.IsNullOrWhiteSpace(proposal.Abstract))
+                    {
+                        <p class="proposal-type-description">@proposal.Abstract</p>
+                    }
+                    @if (!string.IsNullOrWhiteSpace(proposal.Speakers))
+                    {
+                        <p class="field-help">@proposal.Speakers</p>
+                    }
+                    <a class="card-link" href="@($"/c/{Uri.EscapeDataString(Slug)}/proposals/{Uri.EscapeDataString(proposal.Id)}")">
+                        詳細と共有リンク <span aria-hidden="true">→</span>
+                    </a>
+                </article>
+            }
+        </div>
+        @if (!string.IsNullOrEmpty(_continuationToken))
+        {
+            <div class="load-more">
+                <button class="secondary-button" @onclick="LoadMoreAsync" disabled="@_isLoading">さらに表示</button>
+            </div>
+        }
+    </section>
+}
+
+@code {
+    [Parameter]
+    public string Slug { get; set; } = string.Empty;
+
+    private readonly List<PublicProposalDto> _proposals = [];
+    private string? _continuationToken;
+    private string? _errorMessage;
+    private bool _isLoading = true;
+
+    protected override Task OnParametersSetAsync() => LoadAsync();
+    private Task LoadMoreAsync() => LoadAsync(append: true);
+
+    private async Task LoadAsync(bool append = false)
+    {
+        _isLoading = true;
+        _errorMessage = null;
+        try
+        {
+            var result = await Api.ListPublicProposalsAsync(
+                Slug,
+                continuationToken: append ? _continuationToken : null);
+            if (!append)
+            {
+                _proposals.Clear();
+            }
+
+            _proposals.AddRange(result.Proposals);
+            _continuationToken = result.ContinuationToken;
+        }
+        catch (CfpApiException exception)
+        {
+            _errorMessage = exception.UserMessage;
+        }
+        catch (HttpRequestException)
+        {
+            _errorMessage = "通信に失敗しました。接続を確認して、もう一度お試しください。";
+        }
+        catch (OperationCanceledException)
+        {
+            _errorMessage = "応答がタイムアウトしました。時間をおいて再度お試しください。";
+        }
+        catch (InvalidOperationException exception)
+        {
+            _errorMessage = exception.Message;
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+}

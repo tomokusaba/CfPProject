@@ -1,0 +1,87 @@
+﻿@page "/c/{Slug}/proposals/{ProposalId}"
+@inject CfpApiClient Api
+
+<PageTitle>@(_proposal?.Title ?? "プロポーザル") | カンファレンス CFP</PageTitle>
+
+<p class="breadcrumb">
+    <a href="@($"/c/{Uri.EscapeDataString(Slug)}/proposals")">採択プロポーザル</a>
+    <span aria-hidden="true">/</span>
+    <span>詳細</span>
+</p>
+
+@if (_isLoading)
+{
+    <p class="state-message" role="status" aria-live="polite">プロポーザルを読み込んでいます…</p>
+}
+else if (_errorMessage is not null)
+{
+    <div class="error-panel" role="alert">
+        <div><h1>プロポーザルを表示できません</h1><p>@_errorMessage</p></div>
+        <a class="secondary-button" href="@($"/c/{Uri.EscapeDataString(Slug)}/proposals")">一覧へ戻る</a>
+    </div>
+}
+else if (_proposal is not null)
+{
+    <article class="conference-detail">
+        <p class="eyebrow">@_proposal.ConferenceTitle</p>
+        <h1>@_proposal.Title</h1>
+        @if (!string.IsNullOrWhiteSpace(_proposal.Speakers))
+        {
+            <p class="detail-date">@_proposal.Speakers</p>
+        }
+        @if (!string.IsNullOrWhiteSpace(_proposal.Abstract))
+        {
+            <p class="detail-description">@_proposal.Abstract</p>
+        }
+        <div class="detail-actions">
+            <a class="secondary-button" href="@($"/c/{Uri.EscapeDataString(Slug)}/proposals")">一覧へ戻る</a>
+            <a class="primary-button" href="@($"/share/conferences/{Uri.EscapeDataString(Slug)}/proposals/{Uri.EscapeDataString(ProposalId)}")">
+                共有ページ <span aria-hidden="true">↗</span>
+            </a>
+        </div>
+    </article>
+}
+
+@code {
+    [Parameter]
+    public string Slug { get; set; } = string.Empty;
+
+    [Parameter]
+    public string ProposalId { get; set; } = string.Empty;
+
+    private PublicProposalDto? _proposal;
+    private string? _errorMessage;
+    private bool _isLoading = true;
+
+    protected override Task OnParametersSetAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _isLoading = true;
+        _errorMessage = null;
+        try
+        {
+            _proposal = await Api.GetPublicProposalAsync(Slug, ProposalId);
+        }
+        catch (CfpApiException exception)
+        {
+            _errorMessage = exception.UserMessage;
+        }
+        catch (HttpRequestException)
+        {
+            _errorMessage = "通信に失敗しました。接続を確認して、もう一度お試しください。";
+        }
+        catch (OperationCanceledException)
+        {
+            _errorMessage = "応答がタイムアウトしました。時間をおいて再度お試しください。";
+        }
+        catch (InvalidOperationException exception)
+        {
+            _errorMessage = exception.Message;
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+}

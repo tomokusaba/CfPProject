@@ -1,0 +1,23 @@
+﻿@page "/authentication/{Action}"
+@inject AuthenticationConfiguration AuthConfig
+
+<PageTitle>アカウント | カンファレンス CFP</PageTitle>
+
+@if (AuthConfig.IsConfigured)
+{
+    <RemoteAuthenticatorView Action="@Action" />
+}
+else
+{
+    <section class="authorization-panel" aria-labelledby="authentication-heading">
+        <p class="eyebrow">ACCOUNT</p>
+        <h1 id="authentication-heading">ログイン設定が必要です</h1>
+        <p>Entra External ID の Authority、SPA Client ID、API scope を公開アプリ設定に登録してください。</p>
+        <a class="secondary-button" href="/">カンファレンス一覧へ戻る</a>
+    </section>
+}
+
+@code {
+    [Parameter]
+    public string Action { get; set; } = string.Empty;
+}

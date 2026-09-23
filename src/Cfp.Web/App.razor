@@ -1,0 +1,20 @@
+﻿@inject NavigationManager Navigation
+
+<Router AppAssembly="@typeof(App).Assembly" NotFoundPage="typeof(Pages.NotFound)">
+    <Found Context="routeData">
+        <AuthorizeRouteView RouteData="@routeData" DefaultLayout="@typeof(MainLayout)">
+            <NotAuthorized>
+                <section class="authorization-panel" aria-labelledby="authorization-heading">
+                    <p class="eyebrow">SIGN IN REQUIRED</p>
+                    <h1 id="authorization-heading">ログインが必要です</h1>
+                    <p>この画面を利用するには、カンファレンス運営用アカウントでログインしてください。</p>
+                    <a class="primary-button" href="@($"/authentication/login?returnUrl={Uri.EscapeDataString(new Uri(Navigation.Uri).PathAndQuery)}")">ログイン</a>
+                </section>
+            </NotAuthorized>
+            <Authorizing>
+                <p class="state-message" role="status">ログイン状態を確認しています…</p>
+            </Authorizing>
+        </AuthorizeRouteView>
+        <FocusOnNavigate RouteData="@routeData" Selector="h1" />
+    </Found>
+</Router>

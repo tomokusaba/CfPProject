@@ -1,0 +1,120 @@
+﻿@page "/c/{Slug}/sessions/{SessionId}"
+@inject CfpApiClient Api
+
+<PageTitle>@(_session?.Title ?? "セッション") | カンファレンス CFP</PageTitle>
+
+<p class="breadcrumb">
+    <a href="@($"/c/{Uri.EscapeDataString(Slug)}/schedule")">タイムテーブル</a>
+    <span aria-hidden="true">/</span>
+    <span>セッション詳細</span>
+</p>
+
+@if (_isLoading)
+{
+    <p class="state-message" role="status" aria-live="polite">セッション情報を読み込んでいます…</p>
+}
+else if (_errorMessage is not null)
+{
+    <div class="error-panel" role="alert">
+        <div><h1>セッションを表示できません</h1><p>@_errorMessage</p></div>
+        <a class="secondary-button" href="@($"/c/{Uri.EscapeDataString(Slug)}/schedule")">タイムテーブルへ戻る</a>
+    </div>
+}
+else if (_session is not null && _schedule is not null)
+{
+    <article class="conference-detail">
+        <p class="eyebrow">@_schedule.ConferenceTitle</p>
+        <h1>@_session.Title</h1>
+        <p class="detail-date">@FormatTime(_session.StartsAtUtc) – @FormatTime(_session.EndsAtUtc) ・ @_schedule.TimeZoneId</p>
+        <dl class="detail-facts">
+            <div><dt>会場</dt><dd>@_session.RoomName</dd></div>
+            @if (!string.IsNullOrWhiteSpace(_session.TrackName))
+            {
+                <div><dt>トラック</dt><dd>@_session.TrackName</dd></div>
+            }
+            @if (!string.IsNullOrWhiteSpace(_session.Speakers))
+            {
+                <div><dt>登壇者</dt><dd>@_session.Speakers</dd></div>
+            }
+        </dl>
+        @if (!string.IsNullOrWhiteSpace(_session.Abstract))
+        {
+            <p class="detail-description">@_session.Abstract</p>
+        }
+        <div class="detail-actions">
+            <a class="secondary-button" href="@($"/c/{Uri.EscapeDataString(Slug)}/schedule")">タイムテーブルへ戻る</a>
+            <a class="primary-button" href="@($"/share/conferences/{Uri.EscapeDataString(Slug)}/sessions/{Uri.EscapeDataString(SessionId)}")">
+                共有ページ <span aria-hidden="true">↗</span>
+            </a>
+        </div>
+    </article>
+}
+
+@code {
+    [Parameter]
+    public string Slug { get; set; } = string.Empty;
+
+    [Parameter]
+    public string SessionId { get; set; } = string.Empty;
+
+    private PublicScheduleDto? _schedule;
+    private PublicScheduleSessionDto? _session;
+    private string? _errorMessage;
+    private bool _isLoading = true;
+
+    protected override Task OnParametersSetAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _isLoading = true;
+        _errorMessage = null;
+        try
+        {
+            _schedule = await Api.GetPublicScheduleAsync(Slug);
+            _session = _schedule.Sessions.SingleOrDefault(item =>
+                string.Equals(item.SessionId, SessionId, StringComparison.Ordinal));
+            if (_session is null)
+            {
+                _errorMessage = "このセッションは公開されていないか、見つかりません。";
+            }
+        }
+        catch (CfpApiException exception)
+        {
+            _errorMessage = exception.UserMessage;
+        }
+        catch (HttpRequestException)
+        {
+            _errorMessage = "通信に失敗しました。接続を確認して、もう一度お試しください。";
+        }
+        catch (OperationCanceledException)
+        {
+            _errorMessage = "応答がタイムアウトしました。時間をおいて再度お試しください。";
+        }
+        catch (InvalidOperationException exception)
+        {
+            _errorMessage = exception.Message;
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private string FormatTime(string value)
+    {
+        if (!DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var instant))
+        {
+            return value;
+        }
+
+        try
+        {
+            return TimeZoneInfo.ConvertTime(instant, TimeZoneInfo.FindSystemTimeZoneById(_schedule!.TimeZoneId))
+                .ToString("yyyy年M月d日 H:mm", CultureInfo.GetCultureInfo("ja-JP"));
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            return instant.ToString("yyyy年M月d日 H:mm", CultureInfo.GetCultureInfo("ja-JP"));
+        }
+    }
+}

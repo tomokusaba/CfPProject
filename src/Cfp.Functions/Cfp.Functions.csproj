@@ -1,0 +1,21 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AzureFunctionsVersion>v4</AzureFunctionsVersion>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Cfp.Application\Cfp.Application.csproj" />
+    <ProjectReference Include="..\Cfp.Contracts\Cfp.Contracts.csproj" />
+    <ProjectReference Include="..\Cfp.Infrastructure\Cfp.Infrastructure.csproj" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.CosmosDB" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.EventGrid" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.Http" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.Storage.Queues" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.Extensions.Timer" />
+    <PackageReference Include="Microsoft.Azure.Functions.Worker.Sdk" OutputItemType="Analyzer" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

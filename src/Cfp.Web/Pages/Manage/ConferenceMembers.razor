@@ -1,0 +1,203 @@
+﻿@page "/manage/conferences/{ConferenceId}/members"
+@attribute [Authorize]
+@inject CfpProtectedApiClient Api
+
+<PageTitle>メンバー管理 | カンファレンス CFP</PageTitle>
+
+<p class="breadcrumb">
+    <a href="@($"/manage/conferences/{Uri.EscapeDataString(ConferenceId)}")">運営ダッシュボード</a>
+    <span aria-hidden="true">/</span>
+    <span>メンバー管理</span>
+</p>
+
+<section class="management-page" aria-labelledby="members-heading">
+    <p class="eyebrow">CONFERENCE MEMBERS</p>
+    <h1 id="members-heading">メンバー管理</h1>
+    <p class="form-intro">
+        メンバーは一度サインインしてプロフィールを作成してから、ユーザー ID で追加してください。
+        Owner は常に 1 名以上必要です。
+    </p>
+
+    @if (_isLoading)
+    {
+        <p class="state-message" role="status" aria-live="polite">メンバーを読み込んでいます…</p>
+    }
+    else if (_members is null)
+    {
+        <div class="error-panel" role="alert">
+            <div><h2>メンバーを表示できません</h2><p>@_errorMessage</p></div>
+            <button class="secondary-button" @onclick="RetryAsync">再試行</button>
+        </div>
+    }
+    else
+    {
+        @if (_errorMessage is not null)
+        {
+            <div class="error-panel" role="alert"><p>@_errorMessage</p></div>
+        }
+        @if (_statusMessage is not null)
+        {
+            <p class="state-message" role="status" aria-live="polite">@_statusMessage</p>
+        }
+
+        <div class="table-scroll">
+            <table class="data-table">
+                <caption>現在のカンファレンスメンバーと役割</caption>
+                <thead>
+                    <tr><th scope="col">内部ユーザー ID</th><th scope="col">役割</th><th scope="col">状態</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var member in _members.Members.OrderBy(member => member.Role, StringComparer.Ordinal))
+                    {
+                        <tr>
+                            <td><code>@member.UserId</code></td>
+                            <td>@GetRoleText(member.Role)</td>
+                            <td>@(member.IsActive ? "有効" : "無効")</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+
+        <section class="form-page form-page-inline" aria-labelledby="member-form-heading">
+            <p class="eyebrow">MEMBERSHIP</p>
+            <h2 id="member-form-heading">メンバーを追加・役割変更</h2>
+            <EditForm Model="_form" OnValidSubmit="SaveAsync" class="form-layout">
+                <DataAnnotationsValidator />
+                <ValidationSummary class="validation-summary" />
+                <div class="form-field">
+                    <label for="member-user-id">内部ユーザー ID <span class="required-label">必須</span></label>
+                    <InputText id="member-user-id" @bind-Value="_form.UserId" autocomplete="off" />
+                    <p class="field-help">対象者の「プロフィール」画面に表示されます。メールアドレスはユーザー ID ではありません。</p>
+                    <ValidationMessage For="@(() => _form.UserId)" />
+                </div>
+                <div class="form-field">
+                    <label for="member-role">役割 <span class="required-label">必須</span></label>
+                    <InputSelect id="member-role" @bind-Value="_form.Role">
+                        <option value="Organizer">Organizer</option>
+                        <option value="Reviewer">Reviewer</option>
+                        <option value="ConferenceOwner">ConferenceOwner</option>
+                    </InputSelect>
+                </div>
+                <div class="form-field">
+                    <label for="member-reason">変更理由 <span class="required-label">必須</span></label>
+                    <InputTextArea id="member-reason" @bind-Value="_form.Reason" maxlength="500" rows="3" />
+                    <ValidationMessage For="@(() => _form.Reason)" />
+                </div>
+                <div class="form-actions">
+                    <button class="primary-button" type="submit" disabled="@_isSaving">
+                        @(_isSaving ? "保存中…" : "メンバーを保存")
+                    </button>
+                </div>
+            </EditForm>
+        </section>
+    }
+</section>
+
+@code {
+    [Parameter]
+    public string ConferenceId { get; set; } = string.Empty;
+
+    private ConferenceMembersDto? _members;
+    private readonly MembershipForm _form = new();
+    private string? _errorMessage;
+    private string? _statusMessage;
+    private bool _isLoading = true;
+    private bool _isSaving;
+
+    protected override Task OnParametersSetAsync() => LoadAsync();
+    private Task RetryAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _isLoading = true;
+        _errorMessage = null;
+        try
+        {
+            _members = await Api.GetConferenceMembersAsync(ConferenceId);
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (CfpApiException exception)
+        {
+            _errorMessage = exception.UserMessage;
+        }
+        catch (HttpRequestException)
+        {
+            _errorMessage = "通信に失敗しました。接続を確認して、もう一度お試しください。";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_members is null)
+        {
+            return;
+        }
+
+        _isSaving = true;
+        _errorMessage = null;
+        _statusMessage = null;
+        try
+        {
+            await Api.SetConferenceMemberRoleAsync(
+                ConferenceId,
+                _form.UserId.Trim(),
+                _form.Role,
+                _form.Reason.Trim(),
+                _members.ConferenceETag);
+            _statusMessage = "メンバー役割を保存しました。";
+            _form.Reason = string.Empty;
+            await LoadAsync();
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (CfpApiException exception)
+        {
+            _errorMessage = exception.UserMessage;
+            if (exception.StatusCode == HttpStatusCode.PreconditionFailed)
+            {
+                await LoadAsync();
+                _errorMessage = exception.UserMessage;
+            }
+        }
+        catch (HttpRequestException)
+        {
+            _errorMessage = "通信に失敗しました。保存結果が不明な場合は一覧を再読み込みしてください。";
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    private static string GetRoleText(string role) => role switch
+    {
+        "ConferenceOwner" => "ConferenceOwner",
+        "Organizer" => "Organizer",
+        "Reviewer" => "Reviewer",
+        _ => "不明"
+    };
+
+    private sealed class MembershipForm
+    {
+        [Required]
+        [StringLength(100)]
+        public string UserId { get; set; } = string.Empty;
+
+        [Required]
+        public string Role { get; set; } = "Reviewer";
+
+        [Required]
+        [StringLength(500)]
+        public string Reason { get; set; } = string.Empty;
+    }
+}

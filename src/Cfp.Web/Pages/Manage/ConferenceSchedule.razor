@@ -1,0 +1,390 @@
+﻿@page "/manage/conferences/{ConferenceId}/schedule"
+@attribute [Authorize]
+@inject CfpProtectedApiClient Api
+
+<PageTitle>タイムテーブル | カンファレンス CFP</PageTitle>
+
+<p class="breadcrumb">
+    <a href="@($"/manage/conferences/{Uri.EscapeDataString(ConferenceId)}")">運営ダッシュボード</a>
+    <span aria-hidden="true">/</span>
+    <span>タイムテーブル</span>
+</p>
+
+@if (_isLoading)
+{
+    <p class="state-message" role="status" aria-live="polite">タイムテーブルを読み込んでいます…</p>
+}
+else if (_errorMessage is not null && _schedule is null)
+{
+    <div class="error-panel" role="alert">
+        <div><h1>タイムテーブルを表示できません</h1><p>@_errorMessage</p></div>
+        <a class="secondary-button" href="@($"/manage/conferences/{Uri.EscapeDataString(ConferenceId)}")">運営画面へ戻る</a>
+    </div>
+}
+else if (_schedule is not null)
+{
+    <section class="management-page" aria-labelledby="schedule-heading">
+        <p class="eyebrow">SCHEDULE BUILDER</p>
+        <h1 id="schedule-heading">タイムテーブル</h1>
+        <p class="form-intro">時間は @_timeZoneId で入力します。保存前に部屋の重複と提案時間をサーバー側で検証します。</p>
+        @if (_schedule.PublishedRevision is not null)
+        {
+            <p class="state-message" role="status">公開中の revision: @_schedule.PublishedRevision。下書き編集は公開内容に反映されません。</p>
+        }
+
+        @if (_errorMessage is not null)
+        {
+            <div class="error-panel" role="alert"><p>@_errorMessage</p></div>
+        }
+        @if (_statusMessage is not null)
+        {
+            <p class="state-message" role="status" aria-live="polite">@_statusMessage</p>
+        }
+
+        <EditForm Model="_form" OnValidSubmit="SaveAsync" class="form-layout">
+            <DataAnnotationsValidator />
+            <ValidationSummary class="validation-summary" />
+
+            <fieldset class="form-field">
+                <legend>部屋</legend>
+                @foreach (var room in _form.Rooms)
+                {
+                    <div class="dynamic-field">
+                        <div class="date-grid">
+                            <div class="form-field">
+                                <label for="@($"room-id-{room.InternalId}")">部屋 ID</label>
+                                <InputText id="@($"room-id-{room.InternalId}")" @bind-Value="room.Id" maxlength="80" />
+                            </div>
+                            <div class="form-field">
+                                <label for="@($"room-name-{room.InternalId}")">部屋名</label>
+                                <InputText id="@($"room-name-{room.InternalId}")" @bind-Value="room.Name" maxlength="120" />
+                            </div>
+                        </div>
+                        <button type="button" class="text-button" @onclick="() => _form.Rooms.Remove(room)">部屋を削除</button>
+                    </div>
+                }
+                <button type="button" class="secondary-button" @onclick="AddRoom">部屋を追加</button>
+            </fieldset>
+
+            <fieldset class="form-field">
+                <legend>トラック</legend>
+                @foreach (var track in _form.Tracks)
+                {
+                    <div class="dynamic-field">
+                        <div class="date-grid">
+                            <div class="form-field">
+                                <label for="@($"track-id-{track.InternalId}")">トラック ID</label>
+                                <InputText id="@($"track-id-{track.InternalId}")" @bind-Value="track.Id" maxlength="80" />
+                            </div>
+                            <div class="form-field">
+                                <label for="@($"track-name-{track.InternalId}")">トラック名</label>
+                                <InputText id="@($"track-name-{track.InternalId}")" @bind-Value="track.Name" maxlength="120" />
+                            </div>
+                        </div>
+                        <button type="button" class="text-button" @onclick="() => _form.Tracks.Remove(track)">トラックを削除</button>
+                    </div>
+                }
+                <button type="button" class="secondary-button" @onclick="AddTrack">トラックを追加</button>
+            </fieldset>
+
+            <fieldset class="form-field">
+                <legend>セッション枠</legend>
+                @foreach (var slot in _form.Slots)
+                {
+                    <div class="dynamic-field">
+                        <div class="dynamic-field-heading">
+                            <h3>セッション</h3>
+                            <button type="button" class="text-button" @onclick="() => _form.Slots.Remove(slot)">枠を削除</button>
+                        </div>
+                        <div class="date-grid">
+                            <div class="form-field">
+                                <label for="@($"slot-proposal-{slot.InternalId}")">プロポーザル ID</label>
+                                <InputText id="@($"slot-proposal-{slot.InternalId}")" @bind-Value="slot.ProposalId" />
+                            </div>
+                            <div class="form-field">
+                                <label for="@($"slot-room-{slot.InternalId}")">部屋</label>
+                                <InputSelect id="@($"slot-room-{slot.InternalId}")" @bind-Value="slot.RoomId">
+                                    <option value="">部屋を選択</option>
+                                    @foreach (var room in _form.Rooms)
+                                    {
+                                        <option value="@room.Id">@room.Name</option>
+                                    }
+                                </InputSelect>
+                            </div>
+                        </div>
+                        <div class="date-grid">
+                            <div class="form-field">
+                                <label for="@($"slot-track-{slot.InternalId}")">トラック（任意）</label>
+                                <InputSelect id="@($"slot-track-{slot.InternalId}")" @bind-Value="slot.TrackId">
+                                    <option value="">指定なし</option>
+                                    @foreach (var track in _form.Tracks)
+                                    {
+                                        <option value="@track.Id">@track.Name</option>
+                                    }
+                                </InputSelect>
+                            </div>
+                            <div class="form-field">
+                                <label for="@($"slot-start-{slot.InternalId}")">開始（@_timeZoneId）</label>
+                                <InputText id="@($"slot-start-{slot.InternalId}")" type="datetime-local" @bind-Value="slot.StartsAtLocal" />
+                            </div>
+                        </div>
+                        <div class="form-field">
+                            <label for="@($"slot-end-{slot.InternalId}")">終了（@_timeZoneId）</label>
+                            <InputText id="@($"slot-end-{slot.InternalId}")" type="datetime-local" @bind-Value="slot.EndsAtLocal" />
+                        </div>
+                    </div>
+                }
+                <button type="button" class="secondary-button" @onclick="AddSlot">セッション枠を追加</button>
+            </fieldset>
+
+            <div class="form-actions">
+                <button class="secondary-button" type="submit" disabled="@_isSaving">下書きを保存</button>
+                <label class="checkbox-field schedule-publish-confirm">
+                    <input type="checkbox" @bind="_publishConfirmed" />
+                    <span>公開する日程を確認しました</span>
+                </label>
+                <button class="primary-button" type="button" @onclick="PublishAsync" disabled="@(_isSaving || !_publishConfirmed)">
+                    @_isSaving ? "更新中…" : "タイムテーブルを公開"
+                </button>
+            </div>
+        </EditForm>
+    </section>
+}
+
+@code {
+    [Parameter]
+    public string ConferenceId { get; set; } = string.Empty;
+
+    private readonly ScheduleEditorForm _form = new();
+    private ManagedScheduleDto? _schedule;
+    private string _timeZoneId = "Asia/Tokyo";
+    private string? _errorMessage;
+    private string? _statusMessage;
+    private bool _isLoading = true;
+    private bool _isSaving;
+    private bool _publishConfirmed;
+
+    protected override Task OnParametersSetAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _isLoading = true;
+        _errorMessage = null;
+        try
+        {
+            var conference = await Api.GetManagedConferenceAsync(ConferenceId);
+            _timeZoneId = conference.TimeZoneId;
+            _schedule = await Api.GetManagedScheduleAsync(ConferenceId);
+            _form.Rooms = _schedule.Rooms.Select(room => new RoomForm { Id = room.Id, Name = room.Name }).ToList();
+            _form.Tracks = _schedule.Tracks.Select(track => new TrackForm { Id = track.Id, Name = track.Name }).ToList();
+            _form.Slots = _schedule.Slots.Select(slot => new SlotForm
+            {
+                Id = slot.Id,
+                ProposalId = slot.ProposalId,
+                RoomId = slot.RoomId,
+                TrackId = slot.TrackId ?? string.Empty,
+                StartsAtLocal = ToLocalInput(slot.StartsAtUtc),
+                EndsAtLocal = ToLocalInput(slot.EndsAtUtc)
+            }).ToList();
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (CfpApiException exception)
+        {
+            _errorMessage = exception.UserMessage;
+        }
+        catch (HttpRequestException)
+        {
+            _errorMessage = "通信に失敗しました。接続を確認して、もう一度お試しください。";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private void AddRoom() => _form.Rooms.Add(new RoomForm { Id = $"room-{_form.Rooms.Count + 1}", Name = "新しい部屋" });
+    private void AddTrack() => _form.Tracks.Add(new TrackForm { Id = $"track-{_form.Tracks.Count + 1}", Name = "新しいトラック" });
+    private void AddSlot() => _form.Slots.Add(new SlotForm { Id = $"slot-{Guid.NewGuid():N}"[..16] });
+
+    private async Task SaveAsync()
+    {
+        _isSaving = true;
+        _errorMessage = null;
+        _statusMessage = null;
+        try
+        {
+            var request = new SaveScheduleDraftRequestDto
+            {
+                Rooms = _form.Rooms.Select(room => new ScheduleRoomDto { Id = room.Id.Trim(), Name = room.Name.Trim() }).ToList(),
+                Tracks = _form.Tracks.Select(track => new ScheduleTrackDto { Id = track.Id.Trim(), Name = track.Name.Trim() }).ToList(),
+                Slots = _form.Slots.Select(slot => new ScheduleSlotInputDto
+                {
+                    Id = slot.Id,
+                    ProposalId = slot.ProposalId.Trim(),
+                    RoomId = slot.RoomId,
+                    TrackId = string.IsNullOrWhiteSpace(slot.TrackId) ? null : slot.TrackId,
+                    StartsAtUtc = ConvertLocal(slot.StartsAtLocal),
+                    EndsAtUtc = ConvertLocal(slot.EndsAtLocal)
+                }).ToList()
+            };
+            _schedule = await Api.SaveScheduleDraftAsync(
+                ConferenceId,
+                request,
+                string.IsNullOrWhiteSpace(_schedule?.DraftETag) ? null : _schedule.DraftETag);
+            _statusMessage = $"タイムテーブルの下書き revision {_schedule.Revision} を保存しました。";
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (CfpApiException exception)
+        {
+            _errorMessage = exception.UserMessage;
+            if (exception.StatusCode == HttpStatusCode.PreconditionFailed)
+            {
+                await LoadAsync();
+                _errorMessage = exception.UserMessage;
+            }
+        }
+        catch (FormatException)
+        {
+            _errorMessage = "開始・終了時刻を入力してください。";
+        }
+        catch (ArgumentException)
+        {
+            _errorMessage = "タイムゾーンの日時が存在しないか、重複しています。日時を変更してください。";
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            _errorMessage = "カンファレンスのタイムゾーンが見つかりません。運営ダッシュボードで設定を確認してください。";
+        }
+        catch (HttpRequestException)
+        {
+            _errorMessage = "通信に失敗しました。保存結果が不明な場合は再読み込みしてください。";
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    private async Task PublishAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_schedule?.DraftETag))
+        {
+            _errorMessage = "先にタイムテーブルの下書きを保存してください。";
+            return;
+        }
+
+        _isSaving = true;
+        _errorMessage = null;
+        _statusMessage = null;
+        try
+        {
+            _schedule = await Api.PublishScheduleAsync(
+                ConferenceId,
+                _schedule.DraftETag,
+                _schedule.PublicationETag);
+            _statusMessage = $"revision {_schedule.Revision} を公開しました。";
+            _publishConfirmed = false;
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (CfpApiException exception)
+        {
+            _errorMessage = exception.UserMessage;
+            if (exception.StatusCode == HttpStatusCode.PreconditionFailed)
+            {
+                await LoadAsync();
+                _errorMessage = exception.UserMessage;
+            }
+        }
+        catch (HttpRequestException)
+        {
+            _errorMessage = "通信に失敗しました。公開結果が不明な場合は状態を再読み込みしてください。";
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    private string ConvertLocal(string value)
+    {
+        if (!DateTime.TryParseExact(
+                value,
+                "yyyy-MM-ddTHH:mm",
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.None,
+                out var local))
+        {
+            throw new FormatException();
+        }
+
+        local = DateTime.SpecifyKind(local, DateTimeKind.Unspecified);
+        var zone = TimeZoneInfo.FindSystemTimeZoneById(_timeZoneId);
+        if (zone.IsInvalidTime(local) || zone.IsAmbiguousTime(local))
+        {
+            throw new ArgumentException("Invalid or ambiguous local time.");
+        }
+
+        return new DateTimeOffset(local, zone.GetUtcOffset(local))
+            .ToUniversalTime()
+            .ToString("O", CultureInfo.InvariantCulture);
+    }
+
+    private string ToLocalInput(string value)
+    {
+        if (!DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var instant))
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            return TimeZoneInfo.ConvertTime(instant, TimeZoneInfo.FindSystemTimeZoneById(_timeZoneId))
+                .ToString("yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture);
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            return string.Empty;
+        }
+    }
+
+    private sealed class ScheduleEditorForm
+    {
+        public List<RoomForm> Rooms { get; set; } = [];
+        public List<TrackForm> Tracks { get; set; } = [];
+        public List<SlotForm> Slots { get; set; } = [];
+    }
+
+    private sealed class RoomForm
+    {
+        public string InternalId { get; } = Guid.NewGuid().ToString("N");
+        public string Id { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+    }
+
+    private sealed class TrackForm
+    {
+        public string InternalId { get; } = Guid.NewGuid().ToString("N");
+        public string Id { get; set; } = string.Empty;
+        public string Name { get; set; } = string.Empty;
+    }
+
+    private sealed class SlotForm
+    {
+        public string InternalId { get; } = Guid.NewGuid().ToString("N");
+        public string Id { get; set; } = string.Empty;
+        public string ProposalId { get; set; } = string.Empty;
+        public string RoomId { get; set; } = string.Empty;
+        public string TrackId { get; set; } = string.Empty;
+        public string StartsAtLocal { get; set; } = string.Empty;
+        public string EndsAtLocal { get; set; } = string.Empty;
+    }
+}

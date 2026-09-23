@@ -1,0 +1,342 @@
+﻿@page "/manage/conferences/{ConferenceId}/proposals/{ProposalId}"
+@attribute [Authorize]
+@inject CfpProtectedApiClient Api
+
+<PageTitle>応募の詳細 | カンファレンス CFP</PageTitle>
+
+<p class="breadcrumb">
+    <a href="@($"/manage/conferences/{Uri.EscapeDataString(ConferenceId)}/proposals")">応募一覧</a>
+    <span aria-hidden="true">/</span>
+    <span>応募の詳細</span>
+</p>
+
+@if (_isLoading)
+{
+    <p class="state-message" role="status" aria-live="polite">応募内容を読み込んでいます…</p>
+}
+else if (_details is null)
+{
+    <div class="error-panel" role="alert">
+        <div><h1>応募を表示できません</h1><p>@_errorMessage</p></div>
+        <a class="secondary-button" href="@($"/manage/conferences/{Uri.EscapeDataString(ConferenceId)}/proposals")">応募一覧へ戻る</a>
+    </div>
+}
+else
+{
+    <section class="management-page" aria-labelledby="proposal-details-heading">
+        <p class="eyebrow">PROPOSAL</p>
+        <div class="section-heading">
+            <div>
+                <h1 id="proposal-details-heading">@GetTitle()</h1>
+                <p class="field-help">種別: @_details.Proposal.ProposalTypeId ・ フォーム v@_details.Proposal.FormVersion</p>
+            </div>
+            <span class="@GetStatusClass()">@GetStatusText()</span>
+        </div>
+
+        @if (_errorMessage is not null)
+        {
+            <div class="error-panel" role="alert"><p>@_errorMessage</p></div>
+        }
+        @if (_statusMessage is not null)
+        {
+            <p class="state-message" role="status" aria-live="polite">@_statusMessage</p>
+        }
+
+        <dl class="detail-facts">
+            @foreach (var answer in _details.Proposal.Answers)
+            {
+                <div><dt>@answer.Key</dt><dd>@answer.Value</dd></div>
+            }
+        </dl>
+
+        <section class="management-section" aria-labelledby="reviews-heading">
+            <div class="section-heading">
+                <div><p class="eyebrow">REVIEWS</p><h2 id="reviews-heading">審査結果</h2></div>
+            </div>
+            @if (_details.Reviews.Count == 0)
+            {
+                <p class="state-message">提出済みのレビューはありません。</p>
+            }
+            else
+            {
+                <div class="review-task-list">
+                    @foreach (var review in _details.Reviews)
+                    {
+                        <article class="review-task-card">
+                            <div class="card-topline">
+                                <strong>評価 @review.Score / 5</strong>
+                                <span class="field-help">審査者 ID: @review.ReviewerUserId</span>
+                            </div>
+                            <p class="proposal-type-description">@review.Comment</p>
+                        </article>
+                    }
+                </div>
+            }
+        </section>
+
+        @if (_details.Proposal.Status == "Accepted")
+        {
+            <section class="form-page form-page-inline" aria-labelledby="publication-heading">
+                <p class="eyebrow">PUBLICATION</p>
+                <h2 id="publication-heading">公開状態</h2>
+                <p>
+                    同意:
+                    <strong>@(_details.Proposal.PublicationConsentConfirmed ? "確認済み" : "未確認")</strong>
+                    ・状態:
+                    <strong>@(_details.Proposal.PublicationState == "Published" ? "公開中" : "非公開")</strong>
+                </p>
+                @if (_details.Proposal.PublicationConsentConfirmed)
+                {
+                    <button class="@( _details.Proposal.PublicationState == "Published" ? "secondary-button" : "primary-button")"
+                            @onclick="TogglePublicationAsync" disabled="@_isSaving">
+                        @(_details.Proposal.PublicationState == "Published" ? "公開を解除" : "個別公開する")
+                    </button>
+                }
+                else
+                {
+                    <p class="field-help">応募責任者の共同登壇者同意が記録されるまで公開できません。</p>
+                }
+            </section>
+        }
+
+        <section class="form-page form-page-inline" aria-labelledby="reviewer-assignment-heading">
+            <p class="eyebrow">REVIEW ASSIGNMENT</p>
+            <h2 id="reviewer-assignment-heading">審査者を割り当てる</h2>
+            <p class="field-help">先にメンバー管理で Reviewer の役割を付与してください。審査者のユーザー ID はプロフィールで確認できます。</p>
+            <div class="form-layout">
+                <div class="form-field">
+                    <label for="reviewer-user-id">審査者ユーザー ID</label>
+                    <input id="reviewer-user-id" @bind="_reviewerUserId" autocomplete="off" />
+                </div>
+                <div class="form-field">
+                    <label for="assignment-reason">割り当て理由</label>
+                    <textarea id="assignment-reason" @bind="_assignmentReason" maxlength="500" rows="2"></textarea>
+                </div>
+                <div class="form-actions">
+                    <button class="secondary-button" @onclick="AssignReviewerAsync" disabled="@_isSaving">審査者を割り当て</button>
+                </div>
+            </div>
+        </section>
+
+        @if (_details.Proposal.Status is "Submitted" or "UnderReview")
+        {
+            <section class="form-page form-page-inline" aria-labelledby="decision-heading">
+                <p class="eyebrow">FINAL DECISION</p>
+                <h2 id="decision-heading">採否を決定</h2>
+                <div class="form-layout">
+                    <div class="form-field">
+                        <label for="decision-reason">決定理由 <span class="required-label">必須</span></label>
+                        <textarea id="decision-reason" @bind="_decisionReason" maxlength="500" rows="4"></textarea>
+                    </div>
+                    <div class="checkbox-field">
+                        <input id="decision-confirm" type="checkbox" @bind="_decisionConfirmed" />
+                        <label for="decision-confirm">この採否を確定することを確認しました</label>
+                    </div>
+                    <div class="form-actions">
+                        <button class="secondary-button" @onclick="() => DecideAsync(accepted: false)" disabled="@(_isSaving || !_decisionConfirmed)">不採択にする</button>
+                        <button class="primary-button" @onclick="() => DecideAsync(accepted: true)" disabled="@(_isSaving || !_decisionConfirmed)">採択する</button>
+                    </div>
+                </div>
+            </section>
+        }
+    </section>
+}
+
+@code {
+    [Parameter]
+    public string ConferenceId { get; set; } = string.Empty;
+
+    [Parameter]
+    public string ProposalId { get; set; } = string.Empty;
+
+    private ManagedProposalDetailsDto? _details;
+    private string? _errorMessage;
+    private string? _statusMessage;
+    private string _reviewerUserId = string.Empty;
+    private string _assignmentReason = string.Empty;
+    private string _decisionReason = string.Empty;
+    private bool _decisionConfirmed;
+    private bool _isLoading = true;
+    private bool _isSaving;
+
+    protected override Task OnParametersSetAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _isLoading = true;
+        _errorMessage = null;
+        try
+        {
+            _details = await Api.GetConferenceProposalAsync(ConferenceId, ProposalId);
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (CfpApiException exception)
+        {
+            _errorMessage = exception.UserMessage;
+        }
+        catch (HttpRequestException)
+        {
+            _errorMessage = "通信に失敗しました。接続を確認して、もう一度お試しください。";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task AssignReviewerAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_reviewerUserId) || string.IsNullOrWhiteSpace(_assignmentReason))
+        {
+            _errorMessage = "審査者 ID と割り当て理由を入力してください。";
+            return;
+        }
+
+        _isSaving = true;
+        _errorMessage = null;
+        _statusMessage = null;
+        try
+        {
+            await Api.AssignReviewerAsync(
+                ConferenceId,
+                new AssignReviewerRequestDto
+                {
+                    ProposalId = ProposalId,
+                    ReviewerUserId = _reviewerUserId.Trim(),
+                    Reason = _assignmentReason.Trim()
+                });
+            _statusMessage = "審査者を割り当てました。";
+            _reviewerUserId = string.Empty;
+            _assignmentReason = string.Empty;
+            await LoadAsync();
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (CfpApiException exception)
+        {
+            _errorMessage = exception.UserMessage;
+        }
+        catch (HttpRequestException)
+        {
+            _errorMessage = "通信に失敗しました。割り当て状態を再読み込みしてください。";
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    private async Task DecideAsync(bool accepted)
+    {
+        if (_details is null || string.IsNullOrWhiteSpace(_decisionReason))
+        {
+            _errorMessage = "採否を確定する理由を入力してください。";
+            return;
+        }
+
+        _isSaving = true;
+        _errorMessage = null;
+        _statusMessage = null;
+        try
+        {
+            await Api.DecideProposalAsync(
+                ConferenceId,
+                ProposalId,
+                new ProposalDecisionRequestDto { Accepted = accepted, Reason = _decisionReason.Trim() },
+                _details.Proposal.ETag);
+            _statusMessage = accepted ? "採択を記録しました。" : "不採択を記録しました。";
+            _decisionReason = string.Empty;
+            _decisionConfirmed = false;
+            await LoadAsync();
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (CfpApiException exception)
+        {
+            _errorMessage = exception.UserMessage;
+        }
+        catch (HttpRequestException)
+        {
+            _errorMessage = "通信に失敗しました。採否状態を再読み込みしてください。";
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    private async Task TogglePublicationAsync()
+    {
+        if (_details is null)
+        {
+            return;
+        }
+
+        var publish = _details.Proposal.PublicationState != "Published";
+        _isSaving = true;
+        _errorMessage = null;
+        _statusMessage = null;
+        try
+        {
+            var proposal = await Api.SetProposalPublicationStateAsync(
+                ConferenceId,
+                ProposalId,
+                publish,
+                _details.Proposal.ETag);
+            _details.Proposal = proposal;
+            _statusMessage = publish ? "プロポーザルを公開しました。" : "プロポーザルを非公開にしました。";
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (CfpApiException exception)
+        {
+            _errorMessage = exception.UserMessage;
+            if (exception.StatusCode == HttpStatusCode.PreconditionFailed)
+            {
+                await LoadAsync();
+                _errorMessage = exception.UserMessage;
+            }
+        }
+        catch (HttpRequestException)
+        {
+            _errorMessage = "通信に失敗しました。公開状態を再読み込みしてください。";
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    private string GetTitle() =>
+        _details!.Proposal.Answers.TryGetValue("title", out var title) && !string.IsNullOrWhiteSpace(title)
+            ? title
+            : "タイトル未設定の応募";
+
+    private string GetStatusText() => _details!.Proposal.Status switch
+    {
+        "Draft" => "下書き",
+        "Submitted" => "提出済み",
+        "UnderReview" => "審査中",
+        "Accepted" => "採択",
+        "Rejected" => "不採択",
+        "Withdrawn" => "取り下げ",
+        _ => "状態不明"
+    };
+
+    private string GetStatusClass() => _details!.Proposal.Status switch
+    {
+        "Accepted" => "status-pill status-open",
+        "Submitted" or "UnderReview" => "status-pill status-scheduled",
+        "Rejected" or "Withdrawn" => "status-pill status-closed",
+        _ => "status-pill status-unpublished"
+    };
+}

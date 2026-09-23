@@ -48,3 +48,5 @@ _Pvt_Extensions/
 
 # Local environment files
 appsettings.Local.json
+local.settings.json
+src/Cfp.Functions/local.settings.json

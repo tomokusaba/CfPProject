@@ -1,0 +1,162 @@
+﻿@page "/c/{Slug}/cfp"
+@inject CfpApiClient Api
+
+<PageTitle>募集内容 | カンファレンス CFP</PageTitle>
+
+<p class="breadcrumb">
+    <a href="@($"/c/{Uri.EscapeDataString(Slug)}")">カンファレンス概要</a>
+    <span aria-hidden="true">/</span>
+    <span>募集内容</span>
+</p>
+
+@if (_isLoading)
+{
+    <p class="state-message" role="status" aria-live="polite">募集内容を読み込んでいます…</p>
+}
+else if (_errorMessage is not null)
+{
+    <div class="error-panel" role="alert">
+        <div>
+            <h1>募集内容を表示できません</h1>
+            <p>@_errorMessage</p>
+        </div>
+        <a class="secondary-button" href="/">一覧へ戻る</a>
+    </div>
+}
+else if (_conference is not null)
+{
+    <section class="cfp-page" aria-labelledby="cfp-heading">
+        <p class="eyebrow">CALL FOR PROPOSALS</p>
+        <h1 id="cfp-heading">@_conference.Title の募集</h1>
+        <div class="cfp-status">
+            <span class="@GetStatusClass(_conference.CfpAvailability)">@GetStatusText(_conference.CfpAvailability)</span>
+            <span>締切時刻は開催地タイムゾーンに従います。</span>
+        </div>
+
+        @if (_proposalTypes is { Count: > 0 })
+        {
+            <div class="proposal-type-list">
+                @foreach (var proposalType in _proposalTypes)
+                {
+                    <article class="proposal-type-card">
+                        <div class="card-topline">
+                            <span class="status-pill status-scheduled">@proposalType.DurationMinutes 分</span>
+                            @if (proposalType.IsAcceptingSubmissions)
+                            {
+                                <span class="status-pill status-open">受付中</span>
+                            }
+                            else
+                            {
+                                <span class="status-pill status-closed">受付停止中</span>
+                            }
+                        </div>
+                        <h2>@proposalType.Name</h2>
+                        @if (!string.IsNullOrWhiteSpace(proposalType.Description))
+                        {
+                            <p class="proposal-type-description">@proposalType.Description</p>
+                        }
+                        <h3>提出項目</h3>
+                        <ul class="field-overview">
+                            @foreach (var field in proposalType.Fields)
+                            {
+                                <li>
+                                    <span>@field.Label</span>
+                                    @if (field.IsRequired)
+                                    {
+                                        <span class="required-label">必須</span>
+                                    }
+                                    <span class="field-help">@GetFieldKindText(field.Kind)</span>
+                                </li>
+                            }
+                        </ul>
+                        @if (proposalType.IsAcceptingSubmissions && _conference.CfpAvailability == "Open")
+                        {
+                            <p class="field-help">応募前に入力内容をご確認ください。下書きは提出前に編集できます。</p>
+                            <a class="primary-button"
+                               href="@($"/my/proposals/new?conferenceId={Uri.EscapeDataString(_conference.ConferenceId)}&amp;conferenceSlug={Uri.EscapeDataString(_conference.Slug)}&amp;proposalTypeId={Uri.EscapeDataString(proposalType.Id)}")">
+                                応募を開始する
+                            </a>
+                        }
+                    </article>
+                }
+            </div>
+        }
+        else
+        {
+            <div class="empty-panel">
+                <span class="empty-icon" aria-hidden="true">○</span>
+                <h2>公開中の募集種別はありません</h2>
+                <p>募集条件が公開されると、このページに表示されます。</p>
+            </div>
+        }
+    </section>
+}
+
+@code {
+    [Parameter]
+    public string Slug { get; set; } = string.Empty;
+
+    private PublicConferenceDto? _conference;
+    private List<PublicProposalTypeDto> _proposalTypes = [];
+    private string? _errorMessage;
+    private bool _isLoading = true;
+
+    protected override Task OnParametersSetAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _isLoading = true;
+        _errorMessage = null;
+        try
+        {
+            _conference = await Api.GetPublicConferenceAsync(Slug);
+            var result = await Api.ListPublicProposalTypesAsync(Slug);
+            _proposalTypes = result.ProposalTypes;
+        }
+        catch (CfpApiException exception)
+        {
+            _errorMessage = exception.UserMessage;
+        }
+        catch (HttpRequestException)
+        {
+            _errorMessage = "通信に失敗しました。接続を確認して、もう一度お試しください。";
+        }
+        catch (OperationCanceledException)
+        {
+            _errorMessage = "応答がタイムアウトしました。時間をおいて再度お試しください。";
+        }
+        catch (InvalidOperationException exception)
+        {
+            _errorMessage = exception.Message;
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private static string GetStatusClass(string status) => status switch
+    {
+        "Open" => "status-pill status-open",
+        "Scheduled" => "status-pill status-scheduled",
+        "Closed" => "status-pill status-closed",
+        _ => "status-pill status-unpublished"
+    };
+
+    private static string GetStatusText(string status) => status switch
+    {
+        "Open" => "募集中",
+        "Scheduled" => "募集開始前",
+        "Closed" => "募集終了",
+        _ => "募集情報なし"
+    };
+
+    private static string GetFieldKindText(string kind) => kind switch
+    {
+        "ShortText" => "短いテキスト",
+        "LongText" => "長文",
+        "SingleChoice" => "単一選択",
+        "MultipleChoice" => "複数選択",
+        _ => "入力"
+    };
+}

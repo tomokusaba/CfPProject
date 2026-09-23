@@ -1,0 +1,133 @@
+﻿@page "/c/{Slug}/schedule"
+@inject CfpApiClient Api
+
+<PageTitle>公開タイムテーブル | カンファレンス CFP</PageTitle>
+
+<p class="breadcrumb">
+    <a href="@($"/c/{Uri.EscapeDataString(Slug)}")">カンファレンス概要</a>
+    <span aria-hidden="true">/</span>
+    <span>タイムテーブル</span>
+</p>
+
+@if (_isLoading)
+{
+    <p class="state-message" role="status" aria-live="polite">タイムテーブルを読み込んでいます…</p>
+}
+else if (_errorMessage is not null)
+{
+    <div class="error-panel" role="alert">
+        <div><h1>タイムテーブルを表示できません</h1><p>@_errorMessage</p></div>
+        <a class="secondary-button" href="@($"/c/{Uri.EscapeDataString(Slug)}")">概要へ戻る</a>
+    </div>
+}
+else if (_schedule is not null)
+{
+    <section class="cfp-page" aria-labelledby="public-schedule-heading">
+        <p class="eyebrow">SCHEDULE</p>
+        <h1 id="public-schedule-heading">@_schedule.ConferenceTitle のタイムテーブル</h1>
+        <p class="form-intro">表示時刻は @_schedule.TimeZoneId です。</p>
+        @if (_schedule.Sessions.Count == 0)
+        {
+            <div class="empty-panel">
+                <span class="empty-icon" aria-hidden="true">○</span>
+                <h2>公開中のタイムテーブルはありません</h2>
+                <p>主催者が日程を公開すると、ここに表示されます。</p>
+            </div>
+        }
+        else
+        {
+            <ol class="public-schedule-list">
+                @foreach (var session in _schedule.Sessions)
+                {
+                    <li class="public-session-card">
+                        <div class="session-time">
+                            <time datetime="@session.StartsAtUtc">@FormatTime(session.StartsAtUtc, _schedule.TimeZoneId)</time>
+                            <span aria-hidden="true">–</span>
+                            <time datetime="@session.EndsAtUtc">@FormatTime(session.EndsAtUtc, _schedule.TimeZoneId)</time>
+                        </div>
+                        <div class="session-content">
+                            <h2>@session.Title</h2>
+                            @if (!string.IsNullOrWhiteSpace(session.Abstract))
+                            {
+                                <p>@session.Abstract</p>
+                            }
+                            <div class="session-meta">
+                                <span>@session.RoomName</span>
+                                @if (!string.IsNullOrWhiteSpace(session.TrackName))
+                                {
+                                    <span>@session.TrackName</span>
+                                }
+                                @if (!string.IsNullOrWhiteSpace(session.Speakers))
+                                {
+                                    <span>@session.Speakers</span>
+                                }
+                            </div>
+                            <a class="card-link" href="@($"/c/{Uri.EscapeDataString(Slug)}/sessions/{Uri.EscapeDataString(session.SessionId)}")">
+                                セッション詳細 <span aria-hidden="true">→</span>
+                            </a>
+                        </div>
+                    </li>
+                }
+            </ol>
+        }
+    </section>
+}
+
+@code {
+    [Parameter]
+    public string Slug { get; set; } = string.Empty;
+
+    private PublicScheduleDto? _schedule;
+    private string? _errorMessage;
+    private bool _isLoading = true;
+
+    protected override Task OnParametersSetAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _isLoading = true;
+        _errorMessage = null;
+        try
+        {
+            _schedule = await Api.GetPublicScheduleAsync(Slug);
+        }
+        catch (CfpApiException exception)
+        {
+            _errorMessage = exception.UserMessage;
+        }
+        catch (HttpRequestException)
+        {
+            _errorMessage = "通信に失敗しました。接続を確認して、もう一度お試しください。";
+        }
+        catch (OperationCanceledException)
+        {
+            _errorMessage = "応答がタイムアウトしました。時間をおいて再度お試しください。";
+        }
+        catch (InvalidOperationException exception)
+        {
+            _errorMessage = exception.Message;
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private static string FormatTime(string value, string timeZoneId)
+    {
+        if (!DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var instant))
+        {
+            return value;
+        }
+
+        try
+        {
+            return TimeZoneInfo.ConvertTime(instant, TimeZoneInfo.FindSystemTimeZoneById(timeZoneId))
+                .ToString("H:mm", CultureInfo.GetCultureInfo("ja-JP"));
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            return instant.ToString("H:mm", CultureInfo.GetCultureInfo("ja-JP"));
+        }
+    }
+}

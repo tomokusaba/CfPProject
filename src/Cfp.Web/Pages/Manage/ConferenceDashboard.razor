@@ -1,0 +1,310 @@
+﻿@page "/manage/conferences/{ConferenceId}"
+@attribute [Authorize]
+@inject CfpProtectedApiClient Api
+
+<PageTitle>カンファレンス運営 | カンファレンス CFP</PageTitle>
+
+<p class="breadcrumb"><a href="/manage/conferences">運営カンファレンス</a><span aria-hidden="true">/</span><span>概要</span></p>
+
+@if (_isLoading)
+{
+    <p class="state-message" role="status" aria-live="polite">カンファレンス情報を読み込んでいます…</p>
+}
+else if (_conference is null)
+{
+    <div class="error-panel" role="alert">
+        <div>
+            <h1>運営情報を表示できません</h1>
+            <p>@_errorMessage</p>
+        </div>
+        <a class="secondary-button" href="/manage/conferences">運営カンファレンスへ戻る</a>
+    </div>
+}
+else
+{
+    <section class="management-page" aria-labelledby="management-heading">
+        <p class="eyebrow">CONFERENCE OPERATIONS</p>
+        <h1 id="management-heading">@_conference.Title</h1>
+        <p class="management-slug">公開 slug: <code>@_conference.Slug</code></p>
+
+        @if (_errorMessage is not null)
+        {
+            <div class="error-panel" role="alert"><p>@_errorMessage</p></div>
+        }
+        @if (_statusMessage is not null)
+        {
+            <p class="state-message" role="status" aria-live="polite">@_statusMessage</p>
+        }
+
+        <div class="operations-grid">
+            <article class="operation-card">
+                <p class="eyebrow">CONFERENCE VISIBILITY</p>
+                <h2>公開状態</h2>
+                <p><span class="@GetVisibilityClass()">@GetVisibilityText()</span></p>
+                <p class="field-help">公開するとカンファレンス一覧と概要ページに表示されます。</p>
+                @if (_conference.Visibility != "Public" || _conference.LifecycleState != "Active")
+                {
+                    <div class="checkbox-field">
+                        <input id="publish-confirm" type="checkbox" @bind="_publishConfirmed" />
+                        <label for="publish-confirm">公開前の内容を確認しました</label>
+                    </div>
+                    <button class="primary-button" @onclick="PublishAsync" disabled="@(_isSaving || !_publishConfirmed)">
+                        @(_isSaving ? "更新中…" : "カンファレンスを公開")
+                    </button>
+                }
+            </article>
+
+            <article class="operation-card">
+                <p class="eyebrow">CALL FOR PROPOSALS</p>
+                <h2>募集状態</h2>
+                <p><span class="@GetCfpClass()">@GetCfpText()</span></p>
+                <label class="form-field" for="cfp-reason">
+                    変更理由 <span class="required-label">必須</span>
+                    <textarea id="cfp-reason" @bind="_reason" maxlength="500" rows="3"></textarea>
+                </label>
+                @if (_conference.CfpAvailability == "Open" || _conference.CfpAvailability == "Scheduled")
+                {
+                    <button class="secondary-button" @onclick='() => ChangeCfpStateAsync("ManuallyClosed")' disabled="@_isSaving">
+                        募集を停止
+                    </button>
+                }
+                else
+                {
+                    <button class="secondary-button" @onclick='() => ChangeCfpStateAsync("Published")' disabled="@_isSaving">
+                        募集を公開・再開
+                    </button>
+                }
+            </article>
+
+            <article class="operation-card">
+                <p class="eyebrow">PUBLIC SHOWCASE</p>
+                <h2>採択プロポーザル一覧</h2>
+                <p>
+                    <span class="@(_conference.PublicShowcaseEnabled ? "status-pill status-open" : "status-pill status-closed")">
+                        @(_conference.PublicShowcaseEnabled ? "有効" : "無効")
+                    </span>
+                </p>
+                <p class="field-help">公開には応募責任者の同意と個別公開が別途必要です。</p>
+                <label class="form-field" for="showcase-reason">
+                    変更理由 <span class="required-label">必須</span>
+                    <textarea id="showcase-reason" @bind="_reason" maxlength="500" rows="2"></textarea>
+                </label>
+                <button class="secondary-button"
+                        @onclick="ToggleShowcaseAsync"
+                        disabled="@_isSaving">
+                    @(_conference.PublicShowcaseEnabled ? "一覧を無効にする" : "一覧を有効にする")
+                </button>
+            </article>
+        </div>
+
+        <section class="management-section" aria-labelledby="setup-heading">
+            <div class="section-heading">
+                <div>
+                    <p class="eyebrow">SETUP</p>
+                    <h2 id="setup-heading">募集と日程</h2>
+                </div>
+            </div>
+            <div class="management-links">
+                <a class="management-link" href="@($"/manage/conferences/{Uri.EscapeDataString(ConferenceId)}/edit")">
+                    <span><strong>基本情報を編集</strong><small>説明、開催日時、タイムゾーンは後から更新できます。</small></span>
+                    <span aria-hidden="true">→</span>
+                </a>
+                <a class="management-link" href="@($"/manage/conferences/{Uri.EscapeDataString(ConferenceId)}/proposal-types")">
+                    <span><strong>募集種別・フォーム</strong><small>登壇時間、入力項目、受付状態を設定</small></span>
+                    <span aria-hidden="true">→</span>
+                </a>
+                <a class="management-link" href="@($"/manage/conferences/{Uri.EscapeDataString(ConferenceId)}/proposals")">
+                    <span><strong>応募・審査</strong><small>応募を確認し、審査を割り当てて採否を決定</small></span>
+                    <span aria-hidden="true">→</span>
+                </a>
+                @if (_conference.Role == "ConferenceOwner")
+                {
+                    <a class="management-link" href="@($"/manage/conferences/{Uri.EscapeDataString(ConferenceId)}/members")">
+                        <span><strong>メンバー管理</strong><small>Organizer / Reviewer を追加し、最後の Owner を維持</small></span>
+                        <span aria-hidden="true">→</span>
+                    </a>
+                }
+                <a class="management-link" href="@($"/manage/conferences/{Uri.EscapeDataString(ConferenceId)}/schedule")">
+                    <span><strong>タイムテーブル</strong><small>採択済みセッションの配置と公開</small></span>
+                    <span aria-hidden="true">→</span>
+                </a>
+                <a class="management-link" href="@($"/manage/conferences/{Uri.EscapeDataString(ConferenceId)}/mail")">
+                    <span><strong>メール配信履歴</strong><small>受付通知・採否通知の状態を確認</small></span>
+                    <span aria-hidden="true">→</span>
+                </a>
+                <a class="management-link" href="@($"/manage/conferences/{Uri.EscapeDataString(ConferenceId)}/audit")">
+                    <span><strong>操作履歴</strong><small>公開状態、審査、割り当てなどを確認</small></span>
+                    <span aria-hidden="true">→</span>
+                </a>
+            </div>
+        </section>
+
+        <dl class="detail-facts">
+            <div><dt>開催日時</dt><dd>@FormatDate(_conference.StartsAtUtc) 〜 @FormatDate(_conference.EndsAtUtc)</dd></div>
+            <div><dt>タイムゾーン</dt><dd>@_conference.TimeZoneId</dd></div>
+            <div><dt>募集期間</dt><dd>@FormatDate(_conference.CfpOpensAtUtc) 〜 @FormatDate(_conference.CfpClosesAtUtc)</dd></div>
+            <div><dt>説明</dt><dd>@_conference.Description</dd></div>
+        </dl>
+    </section>
+}
+
+@code {
+    [Parameter]
+    public string ConferenceId { get; set; } = string.Empty;
+
+    private ManagedConferenceDto? _conference;
+    private string? _errorMessage;
+    private string? _statusMessage;
+    private string _reason = string.Empty;
+    private bool _isLoading = true;
+    private bool _isSaving;
+    private bool _publishConfirmed;
+
+    protected override Task OnParametersSetAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _isLoading = true;
+        _errorMessage = null;
+        try
+        {
+            _conference = await Api.GetManagedConferenceAsync(ConferenceId);
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (CfpApiException exception)
+        {
+            _errorMessage = exception.UserMessage;
+        }
+        catch (HttpRequestException)
+        {
+            _errorMessage = "通信に失敗しました。接続を確認して、もう一度お試しください。";
+        }
+        catch (InvalidOperationException exception)
+        {
+            _errorMessage = exception.Message;
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task PublishAsync()
+    {
+        if (!_publishConfirmed || _conference is null)
+        {
+            return;
+        }
+
+        await UpdateAsync(
+            () => Api.PublishConferenceAsync(ConferenceId, _conference.ETag),
+            "カンファレンスを公開しました。");
+        if (_conference.Visibility == "Public")
+        {
+            _publishConfirmed = false;
+        }
+    }
+
+    private Task ChangeCfpStateAsync(string state)
+    {
+        if (string.IsNullOrWhiteSpace(_reason))
+        {
+            _errorMessage = "募集状態を変更する理由を入力してください。";
+            return Task.CompletedTask;
+        }
+
+        return UpdateAsync(
+            () => Api.SetCfpStateAsync(ConferenceId, state, _reason, _conference!.ETag),
+            state == "Published" ? "募集を公開しました。" : "募集を停止しました。");
+    }
+
+    private Task ToggleShowcaseAsync()
+    {
+        if (_conference is null || string.IsNullOrWhiteSpace(_reason))
+        {
+            _errorMessage = "採択プロポーザル一覧の変更理由を入力してください。";
+            return Task.CompletedTask;
+        }
+
+        var enabled = !_conference.PublicShowcaseEnabled;
+        return UpdateAsync(
+            () => Api.SetPublicShowcaseAsync(ConferenceId, enabled, _reason, _conference.ETag),
+            enabled ? "採択プロポーザル一覧を有効にしました。" : "採択プロポーザル一覧を無効にしました。");
+    }
+
+    private async Task UpdateAsync(Func<Task<ManagedConferenceDto>> update, string successMessage)
+    {
+        _isSaving = true;
+        _errorMessage = null;
+        _statusMessage = null;
+        try
+        {
+            _conference = await update();
+            _statusMessage = successMessage;
+            _reason = string.Empty;
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (CfpApiException exception)
+        {
+            _errorMessage = exception.UserMessage;
+            if (exception.StatusCode == HttpStatusCode.PreconditionFailed)
+            {
+                var conflictMessage = _errorMessage;
+                await LoadAsync();
+                _errorMessage = conflictMessage;
+            }
+        }
+        catch (HttpRequestException)
+        {
+            _errorMessage = "通信に失敗しました。保存結果が不明な場合は、状態を再読み込みしてください。";
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    private string GetVisibilityText() =>
+        _conference!.Visibility == "Public" && _conference.LifecycleState == "Active" ? "公開中" : "非公開";
+
+    private string GetVisibilityClass() =>
+        _conference!.Visibility == "Public" && _conference.LifecycleState == "Active"
+            ? "status-pill status-open"
+            : "status-pill status-closed";
+
+    private string GetCfpText()
+    {
+        if (_conference!.Visibility != "Public" || _conference.LifecycleState != "Active")
+        {
+            return "カンファレンス非公開のため受付不可";
+        }
+
+        return _conference.CfpAvailability switch
+        {
+            "Open" => "募集中",
+            "Scheduled" => "募集開始前",
+            "Closed" => "募集終了または停止中",
+            _ => "未公開"
+        };
+    }
+
+    private string GetCfpClass() => _conference!.CfpAvailability switch
+    {
+        "Open" => "status-pill status-open",
+        "Scheduled" => "status-pill status-scheduled",
+        "Closed" => "status-pill status-closed",
+        _ => "status-pill status-unpublished"
+    };
+
+    private string FormatDate(string value) =>
+        DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var instant)
+            ? TimeZoneInfo.ConvertTime(instant, TimeZoneInfo.FindSystemTimeZoneById(_conference!.TimeZoneId))
+                .ToString("yyyy年M月d日 H:mm", CultureInfo.GetCultureInfo("ja-JP"))
+            : value;
+}

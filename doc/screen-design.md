@@ -165,9 +165,9 @@ SNS 共有 URL は `/share/conferences/{slug}` 等の Functions HTML endpoint �
 
 **メールセンター**
 
-- 宛先セグメントと対象人数、除外条件、テンプレート、件名、本文、送信者を確認する。
+- 宛先セグメントと対象人数、除外人数、件名、本文、送信者を確認する。MVP のセグメントは応募状態（受付済み・審査中・採択・不採択）で、1 campaign あたり送信可能な対象は最大50人とする。
 - 通信カテゴリを確認する。`ConferenceOperations` は recipient の明示 opt-in がある場合だけ送信対象にし、`Transactional` は受付・採否などの必要連絡に限る。
-- プレビューと送信確認を必須とし、送信中は重複実行を防止する。大量送信時は対象範囲と件数を再確認する。
+- プレビューは最大30分有効な宛先 snapshot とし、対象ステータス・対象人数・対象外人数・件名・本文を表示する。送信理由の監査記録と明示確認を必須とし、Idempotency-Key と ETag で重複実行・古い preview の送信を防止する。上限を超える一括配信は受け付けない。
 - 各通知を `Pending / Ready / Sending / Accepted / Delivered / Bounced / Suppressed / FilteredSpam / Quarantined / Failed / Unknown / Cancelled` で表示する。`Accepted` は受信者への配信完了を意味しない。
 - `Delivered` は宛先側メールサーバーへの引き渡しを示す。バウンス、配信抑止、迷惑メール判定、隔離等はそれぞれ `Bounced / Suppressed / FilteredSpam / Quarantined` として表示し、結果不明の `Unknown` は自動再送せず運営者に照合を促す。
 - 一括送信は宛先人数、本文、対象条件の固定 snapshot を再確認してから開始する。送信後に対象条件を再評価しない。

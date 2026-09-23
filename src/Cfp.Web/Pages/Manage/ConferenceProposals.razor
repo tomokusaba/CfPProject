@@ -1,0 +1,140 @@
+﻿@page "/manage/conferences/{ConferenceId}/proposals"
+@attribute [Authorize]
+@inject CfpProtectedApiClient Api
+
+<PageTitle>応募一覧 | カンファレンス CFP</PageTitle>
+
+<p class="breadcrumb"><a href="@($"/manage/conferences/{Uri.EscapeDataString(ConferenceId)}")">運営ダッシュボード</a><span aria-hidden="true">/</span><span>応募一覧</span></p>
+
+<section class="management-page" aria-labelledby="managed-proposals-heading">
+    <p class="eyebrow">PROPOSAL REVIEW</p>
+    <h1 id="managed-proposals-heading">応募一覧</h1>
+    <p class="form-intro">応募と審査結果は、このカンファレンスの Organizer 以上だけが閲覧できます。</p>
+
+    @if (_isLoading)
+    {
+        <p class="state-message" role="status" aria-live="polite">応募を読み込んでいます…</p>
+    }
+    else if (_errorMessage is not null)
+    {
+        <div class="error-panel" role="alert">
+            <div><h2>応募一覧を表示できません</h2><p>@_errorMessage</p></div>
+            <button class="secondary-button" @onclick="RetryAsync">再試行</button>
+        </div>
+    }
+    else if (_proposals.Count == 0)
+    {
+        <div class="empty-panel">
+            <span class="empty-icon" aria-hidden="true">○</span>
+            <h2>応募はまだありません</h2>
+            <p>応募が提出されると、このページに表示されます。</p>
+        </div>
+    }
+    else
+    {
+        <div class="proposal-list">
+            @foreach (var proposal in _proposals)
+            {
+                <article class="proposal-list-card">
+                    <div class="card-topline">
+                        <span class="@GetStatusClass(proposal.Status)">@GetStatusText(proposal.Status)</span>
+                        <span class="field-help">フォーム v@proposal.FormVersion</span>
+                    </div>
+                    <h2><a href="@($"/manage/conferences/{Uri.EscapeDataString(ConferenceId)}/proposals/{Uri.EscapeDataString(proposal.Id)}")">@GetTitle(proposal)</a></h2>
+                    <p class="field-help">種別: @proposal.ProposalTypeId</p>
+                    @if (!string.IsNullOrWhiteSpace(proposal.SubmittedAtUtc))
+                    {
+                        <time datetime="@proposal.SubmittedAtUtc">@FormatDate(proposal.SubmittedAtUtc)</time>
+                    }
+                    <a class="card-link" href="@($"/manage/conferences/{Uri.EscapeDataString(ConferenceId)}/proposals/{Uri.EscapeDataString(proposal.Id)}")">
+                        応募と審査を開く <span aria-hidden="true">→</span>
+                    </a>
+                </article>
+            }
+        </div>
+        @if (!string.IsNullOrEmpty(_continuationToken))
+        {
+            <div class="load-more">
+                <button class="secondary-button" @onclick="LoadMoreAsync" disabled="@_isLoading">さらに表示</button>
+            </div>
+        }
+    }
+</section>
+
+@code {
+    [Parameter]
+    public string ConferenceId { get; set; } = string.Empty;
+
+    private readonly List<ManagedProposalDto> _proposals = [];
+    private string? _continuationToken;
+    private string? _errorMessage;
+    private bool _isLoading = true;
+
+    protected override Task OnParametersSetAsync() => LoadAsync();
+    private Task RetryAsync() => LoadAsync();
+    private Task LoadMoreAsync() => LoadAsync(append: true);
+
+    private async Task LoadAsync(bool append = false)
+    {
+        _isLoading = true;
+        _errorMessage = null;
+        try
+        {
+            var result = await Api.ListConferenceProposalsAsync(
+                ConferenceId,
+                continuationToken: append ? _continuationToken : null);
+            if (!append)
+            {
+                _proposals.Clear();
+            }
+
+            _proposals.AddRange(result.Proposals);
+            _continuationToken = result.ContinuationToken;
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (CfpApiException exception)
+        {
+            _errorMessage = exception.UserMessage;
+        }
+        catch (HttpRequestException)
+        {
+            _errorMessage = "通信に失敗しました。接続を確認して、もう一度お試しください。";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private static string GetTitle(ManagedProposalDto proposal) =>
+        proposal.Answers.TryGetValue("title", out var title) && !string.IsNullOrWhiteSpace(title)
+            ? title
+            : "タイトル未設定の応募";
+
+    private static string GetStatusText(string status) => status switch
+    {
+        "Draft" => "下書き",
+        "Submitted" => "提出済み",
+        "UnderReview" => "審査中",
+        "Accepted" => "採択",
+        "Rejected" => "不採択",
+        "Withdrawn" => "取り下げ",
+        _ => "状態不明"
+    };
+
+    private static string GetStatusClass(string status) => status switch
+    {
+        "Accepted" => "status-pill status-open",
+        "Submitted" or "UnderReview" => "status-pill status-scheduled",
+        "Rejected" or "Withdrawn" => "status-pill status-closed",
+        _ => "status-pill status-unpublished"
+    };
+
+    private static string FormatDate(string value) =>
+        DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var instant)
+            ? instant.ToLocalTime().ToString("yyyy年M月d日 H:mm", CultureInfo.GetCultureInfo("ja-JP"))
+            : value;
+}

@@ -1,0 +1,234 @@
+﻿@page "/manage/conferences/new"
+@attribute [Authorize]
+@inject CfpProtectedApiClient Api
+@inject AuthenticationConfiguration Authentication
+
+<PageTitle>カンファレンスを作成 | カンファレンス CFP</PageTitle>
+
+<p class="breadcrumb"><a href="/">公開カンファレンス</a><span aria-hidden="true">/</span><span>作成</span></p>
+
+<section class="form-page" aria-labelledby="create-conference-heading">
+    <p class="eyebrow">CONFERENCE SETUP</p>
+    <h1 id="create-conference-heading">カンファレンスを作成</h1>
+    <p class="form-intro">作成直後は非公開の下書きです。公開や募集開始は、設定を確認してから別途行います。</p>
+
+    @if (!Authentication.IsConfigured)
+    {
+        <div class="error-panel" role="alert">
+            <div>
+                <h2>認証設定がありません</h2>
+                <p>Entra External ID の Authority、Client ID、API scope を設定してください。</p>
+            </div>
+        </div>
+    }
+    else
+    {
+        <EditForm Model="_form" OnValidSubmit="SubmitAsync" class="form-layout">
+            <DataAnnotationsValidator />
+            <ValidationSummary class="validation-summary" />
+
+            <div class="form-field">
+                <label for="conference-title">カンファレンス名 <span class="required-label">必須</span></label>
+                <InputText id="conference-title" @bind-Value="_form.Title" maxlength="200" autocomplete="off" />
+                <ValidationMessage For="@(() => _form.Title)" />
+            </div>
+
+            <div class="form-field">
+                <label for="conference-slug">公開 URL 用 slug <span class="required-label">必須</span></label>
+                <InputText id="conference-slug" @bind-Value="_form.Slug" maxlength="80" autocomplete="off" />
+                <p class="field-help">小文字英数字とハイフンを使用します。例: example-conf</p>
+                <ValidationMessage For="@(() => _form.Slug)" />
+            </div>
+
+            <div class="form-field">
+                <label for="conference-description">概要</label>
+                <InputTextArea id="conference-description" @bind-Value="_form.Description" maxlength="10000" rows="5" />
+                <ValidationMessage For="@(() => _form.Description)" />
+            </div>
+
+            <div class="form-field">
+                <label for="conference-time-zone">開催地のタイムゾーン <span class="required-label">必須</span></label>
+                <InputText id="conference-time-zone" @bind-Value="_form.TimeZoneId" autocomplete="off" />
+                <p class="field-help">IANA time zone ID を指定してください。例: Asia/Tokyo</p>
+                <ValidationMessage For="@(() => _form.TimeZoneId)" />
+            </div>
+
+            <fieldset class="form-field">
+                <legend>開催日時 <span class="required-label">必須</span></legend>
+                <div class="date-grid">
+                    <div>
+                        <label class="sub-label" for="conference-start">開始</label>
+                        <InputText id="conference-start" type="datetime-local" @bind-Value="_form.StartsAtLocal" />
+                    </div>
+                    <div>
+                        <label class="sub-label" for="conference-end">終了</label>
+                        <InputText id="conference-end" type="datetime-local" @bind-Value="_form.EndsAtLocal" />
+                    </div>
+                </div>
+                <ValidationMessage For="@(() => _form.StartsAtLocal)" />
+                <ValidationMessage For="@(() => _form.EndsAtLocal)" />
+            </fieldset>
+
+            <fieldset class="form-field">
+                <legend>募集期間 <span class="required-label">必須</span></legend>
+                <div class="date-grid">
+                    <div>
+                        <label class="sub-label" for="cfp-open">募集開始</label>
+                        <InputText id="cfp-open" type="datetime-local" @bind-Value="_form.CfpOpensAtLocal" />
+                    </div>
+                    <div>
+                        <label class="sub-label" for="cfp-close">締切</label>
+                        <InputText id="cfp-close" type="datetime-local" @bind-Value="_form.CfpClosesAtLocal" />
+                    </div>
+                </div>
+                <ValidationMessage For="@(() => _form.CfpOpensAtLocal)" />
+                <ValidationMessage For="@(() => _form.CfpClosesAtLocal)" />
+            </fieldset>
+
+            @if (_errorMessage is not null)
+            {
+                <div class="error-panel" role="alert">
+                    <p>@_errorMessage</p>
+                </div>
+            }
+
+            @if (_createdConference is not null)
+            {
+                <div class="success-panel" role="status" aria-live="polite">
+                    <h2>下書きを作成しました</h2>
+                    <p>カンファレンス ID: <code>@_createdConference.Id</code></p>
+                    <p>公開するまでは、閲覧者には表示されません。</p>
+                    <a class="primary-button" href="@($"/manage/conferences/{Uri.EscapeDataString(_createdConference.Id)}")">運営画面を開く</a>
+                    <a class="secondary-button" href="/">公開カンファレンス一覧へ</a>
+                </div>
+            }
+            else
+            {
+                <div class="form-actions">
+                    <a class="secondary-button" href="/">キャンセル</a>
+                    <button class="primary-button" type="submit" disabled="@_isSubmitting">
+                        @(_isSubmitting ? "作成中…" : "下書きを作成")
+                    </button>
+                </div>
+            }
+        </EditForm>
+    }
+</section>
+
+@code {
+    private readonly ConferenceForm _form = new();
+    private string? _errorMessage;
+    private bool _isSubmitting;
+    private CreatedConferenceDto? _createdConference;
+    private Guid _idempotencyKey = Guid.NewGuid();
+
+    private async Task SubmitAsync()
+    {
+        _errorMessage = null;
+        _isSubmitting = true;
+        try
+        {
+            var zone = TimeZoneInfo.FindSystemTimeZoneById(_form.TimeZoneId.Trim());
+            if (!TryConvertLocal(_form.StartsAtLocal, zone, out var startsAtUtc) ||
+                !TryConvertLocal(_form.EndsAtLocal, zone, out var endsAtUtc) ||
+                !TryConvertLocal(_form.CfpOpensAtLocal, zone, out var cfpOpensAtUtc) ||
+                !TryConvertLocal(_form.CfpClosesAtLocal, zone, out var cfpClosesAtUtc))
+            {
+                _errorMessage = "日時を確認してください。タイムゾーン切り替え時の存在しない時刻・重複時刻は選べません。";
+                return;
+            }
+
+            _createdConference = await Api.CreateConferenceAsync(
+                new CreateConferenceRequestDto
+                {
+                    Slug = _form.Slug.Trim(),
+                    Title = _form.Title.Trim(),
+                    Description = _form.Description.Trim(),
+                    TimeZoneId = _form.TimeZoneId.Trim(),
+                    StartsAtUtc = startsAtUtc.ToString("O", CultureInfo.InvariantCulture),
+                    EndsAtUtc = endsAtUtc.ToString("O", CultureInfo.InvariantCulture),
+                    CfpOpensAtUtc = cfpOpensAtUtc.ToString("O", CultureInfo.InvariantCulture),
+                    CfpClosesAtUtc = cfpClosesAtUtc.ToString("O", CultureInfo.InvariantCulture)
+                },
+                _idempotencyKey);
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (CfpApiException exception)
+        {
+            _errorMessage = exception.UserMessage;
+        }
+        catch (HttpRequestException)
+        {
+            _errorMessage = "通信に失敗しました。接続を確認して、もう一度お試しください。";
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            _errorMessage = "タイムゾーン ID が見つかりません。例にある Asia/Tokyo などを指定してください。";
+        }
+        catch (InvalidOperationException exception)
+        {
+            _errorMessage = exception.Message;
+        }
+        finally
+        {
+            _isSubmitting = false;
+        }
+    }
+
+    private static bool TryConvertLocal(string value, TimeZoneInfo zone, out DateTimeOffset utc)
+    {
+        utc = default;
+        if (!DateTime.TryParseExact(
+                value,
+                "yyyy-MM-ddTHH:mm",
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.None,
+                out var localTime))
+        {
+            return false;
+        }
+
+        localTime = DateTime.SpecifyKind(localTime, DateTimeKind.Unspecified);
+        if (zone.IsInvalidTime(localTime) || zone.IsAmbiguousTime(localTime))
+        {
+            return false;
+        }
+
+        utc = new DateTimeOffset(localTime, zone.GetUtcOffset(localTime)).ToUniversalTime();
+        return true;
+    }
+
+    private sealed class ConferenceForm
+    {
+        [Required]
+        [StringLength(200)]
+        public string Title { get; set; } = string.Empty;
+
+        [Required]
+        [StringLength(80)]
+        [RegularExpression("^[a-z0-9]+(?:-[a-z0-9]+)*$", ErrorMessage = "小文字英数字をハイフンで区切って入力してください。")]
+        public string Slug { get; set; } = string.Empty;
+
+        [StringLength(10_000)]
+        public string Description { get; set; } = string.Empty;
+
+        [Required]
+        [StringLength(100)]
+        public string TimeZoneId { get; set; } = "Asia/Tokyo";
+
+        [Required]
+        public string StartsAtLocal { get; set; } = string.Empty;
+
+        [Required]
+        public string EndsAtLocal { get; set; } = string.Empty;
+
+        [Required]
+        public string CfpOpensAtLocal { get; set; } = string.Empty;
+
+        [Required]
+        public string CfpClosesAtLocal { get; set; } = string.Empty;
+    }
+}

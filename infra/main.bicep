@@ -32,12 +32,19 @@ param maximumInstanceCount int = 40
 ])
 param instanceMemoryMB int = 2048
 
+@description('Additional exact browser origins allowed to call the Functions API, such as local or staging frontends.')
+param additionalCorsOrigins array = []
+
+@description('Verified ACS Email MailFrom address. Configure this after the Azure-managed domain is provisioned.')
+param emailSenderAddress string = ''
+
 var resourceToken = toLower(uniqueString(subscription().id, resourceGroup().id, location))
 var deploymentStorageContainerName = 'app-package-${take(resourceToken, 13)}'
 var storageBlobDataOwnerRoleId = 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
 var storageQueueDataContributorRoleId = '974c5e8b-45b9-4653-ba55-5f855dd0fb88'
 var storageTableDataContributorRoleId = '0a9a7e1f-b9d0-4cc4-a60d-0319b160aaa3'
 var cosmosDataContributorRoleId = '00000000-0000-0000-0000-000000000002'
+var communicationEmailSenderRoleId = '0ec3c718-2035-4ae6-84b2-c23a254ec10a'
 
 resource staticWebApp 'Microsoft.Web/staticSites@2022-09-01' = {
   name: 'swa-${resourceToken}'
@@ -329,6 +336,16 @@ resource communicationService 'Microsoft.Communication/communicationServices@202
   }
 }
 
+resource communicationEmailSenderRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(communicationService.id, functionIdentity.id, communicationEmailSenderRoleId)
+  scope: communicationService
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', communicationEmailSenderRoleId)
+    principalId: functionIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 resource functionPlan 'Microsoft.Web/serverfarms@2024-04-01' = {
   name: 'plan-${resourceToken}'
   location: location
@@ -358,9 +375,9 @@ resource functionApp 'Microsoft.Web/sites@2024-04-01' = {
     siteConfig: {
       minTlsVersion: '1.2'
       cors: {
-        allowedOrigins: [
+        allowedOrigins: concat([
           'https://${staticWebApp.properties.defaultHostname}'
-        ]
+        ], additionalCorsOrigins)
         supportCredentials: false
       }
     }
@@ -400,7 +417,13 @@ resource functionAppSettings 'Microsoft.Web/sites/config@2024-04-01' = {
     APPLICATIONINSIGHTS_CONNECTION_STRING: applicationInsights.properties.ConnectionString
     Cosmos__Endpoint: 'https://${cosmosAccount.name}.documents.azure.com:443/'
     Cosmos__DatabaseName: cosmosDatabase.name
+    COSMOS_DATABASE_NAME: cosmosDatabase.name
+    CosmosConnection__accountEndpoint: 'https://${cosmosAccount.name}.documents.azure.com:443/'
+    CosmosConnection__credential: 'managedidentity'
+    CosmosConnection__clientId: functionIdentity.properties.clientId
     Communication__Endpoint: 'https://${communicationService.name}.communication.azure.com/'
+    Communication__ResourceId: communicationService.id
+    Communication__SenderAddress: emailSenderAddress
     Communication__EmailServiceResourceId: emailService.id
     Communication__EmailDomainResourceId: emailDomain.id
   }
@@ -450,10 +473,12 @@ resource functionAuthSettings 'Microsoft.Web/sites/config@2022-09-01' = {
 
 output staticWebAppUrl string = 'https://${staticWebApp.properties.defaultHostname}'
 output functionAppUrl string = 'https://${functionApp.properties.defaultHostName}'
+output functionAppName string = functionApp.name
 output cosmosAccountName string = cosmosAccount.name
 output cosmosDatabaseName string = cosmosDatabase.name
 output cosmosEndpoint string = 'https://${cosmosAccount.name}.documents.azure.com:443/'
 output functionIdentityPrincipalId string = functionIdentity.properties.principalId
 output communicationServiceName string = communicationService.name
+output communicationServiceId string = communicationService.id
 output emailServiceName string = emailService.name
 output emailDomainResourceId string = emailDomain.id

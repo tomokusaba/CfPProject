@@ -1,0 +1,128 @@
+﻿@page "/c/{Slug}"
+@inject CfpApiClient Api
+
+<PageTitle>@(_conference?.Title ?? "カンファレンス") | カンファレンス CFP</PageTitle>
+
+<p class="breadcrumb"><a href="/">カンファレンス一覧</a><span aria-hidden="true">/</span><span>概要</span></p>
+
+@if (_isLoading)
+{
+    <p class="state-message" role="status" aria-live="polite">カンファレンス情報を読み込んでいます…</p>
+}
+else if (_errorMessage is not null)
+{
+    <div class="error-panel" role="alert">
+        <div>
+            <h1>カンファレンスを表示できません</h1>
+            <p>@_errorMessage</p>
+        </div>
+        <a class="secondary-button" href="/">一覧へ戻る</a>
+    </div>
+}
+else if (_conference is not null)
+{
+    <article class="conference-detail">
+        <p class="eyebrow">CONFERENCE</p>
+        <div class="detail-heading">
+            <div>
+                <h1>@_conference.Title</h1>
+                <p class="detail-date">@FormatDate(_conference.StartsAtUtc, _conference.TimeZoneId)</p>
+            </div>
+            <span class="status-pill status-@_conference.CfpAvailability.ToLowerInvariant()">
+                @GetStatusText(_conference.CfpAvailability)
+            </span>
+        </div>
+        @if (!string.IsNullOrWhiteSpace(_conference.Description))
+        {
+            <p class="detail-description">@_conference.Description</p>
+        }
+        <dl class="detail-facts">
+            <div><dt>開催日時</dt><dd>@FormatDate(_conference.StartsAtUtc, _conference.TimeZoneId) 〜 @FormatDate(_conference.EndsAtUtc, _conference.TimeZoneId)</dd></div>
+            <div><dt>タイムゾーン</dt><dd>@_conference.TimeZoneId</dd></div>
+            <div><dt>募集状態</dt><dd>@GetStatusText(_conference.CfpAvailability)</dd></div>
+        </dl>
+        <div class="detail-actions">
+            <a class="primary-button" href="/">募集一覧へ戻る</a>
+            @if (_conference.CfpAvailability != "Unpublished")
+            {
+                <a class="secondary-button" href="@($"/c/{Uri.EscapeDataString(_conference.Slug)}/cfp")">
+                    募集内容を見る
+                </a>
+            }
+            @if (_conference.PublicShowcaseEnabled)
+            {
+                <a class="secondary-button" href="@($"/c/{Uri.EscapeDataString(_conference.Slug)}/proposals")">
+                    採択プロポーザルを見る
+                </a>
+            }
+            <a class="secondary-button" href="@($"/c/{Uri.EscapeDataString(_conference.Slug)}/schedule")">
+                タイムテーブルを見る
+            </a>
+        </div>
+    </article>
+}
+
+@code {
+    [Parameter]
+    public string Slug { get; set; } = string.Empty;
+
+    private PublicConferenceDto? _conference;
+    private string? _errorMessage;
+    private bool _isLoading = true;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        _isLoading = true;
+        _errorMessage = null;
+        try
+        {
+            _conference = await Api.GetPublicConferenceAsync(Slug);
+        }
+        catch (CfpApiException exception)
+        {
+            _errorMessage = exception.UserMessage;
+        }
+        catch (HttpRequestException)
+        {
+            _errorMessage = "通信に失敗しました。接続を確認して、もう一度お試しください。";
+        }
+        catch (OperationCanceledException)
+        {
+            _errorMessage = "応答がタイムアウトしました。時間をおいて再度お試しください。";
+        }
+        catch (InvalidOperationException exception)
+        {
+            _errorMessage = exception.Message;
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private static string GetStatusText(string status) => status switch
+    {
+        "Open" => "募集中",
+        "Scheduled" => "募集開始前",
+        "Closed" => "募集終了",
+        _ => "募集情報なし"
+    };
+
+    private static string FormatDate(string startsAtUtc, string timeZoneId)
+    {
+        if (!DateTimeOffset.TryParse(startsAtUtc, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var instant))
+        {
+            return startsAtUtc;
+        }
+
+        try
+        {
+            return TimeZoneInfo.ConvertTime(instant, TimeZoneInfo.FindSystemTimeZoneById(timeZoneId))
+                .ToString("yyyy年M月d日 H:mm", CultureInfo.GetCultureInfo("ja-JP"));
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            return instant.ToString("yyyy年M月d日 H:mm", CultureInfo.GetCultureInfo("ja-JP"));
+        }
+    }
+}
