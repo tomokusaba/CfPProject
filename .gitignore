@@ -1,0 +1,50 @@
+# Build results
+[Dd]ebug/
+[Dd]ebugPublic/
+[Rr]elease/
+[Rr]eleases/
+[Xx]64/
+[Xx]86/
+[Ww][Ii][Nn]32/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+[Bb]in/
+[Oo]bj/
+
+# Visual Studio
+.vs/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Test results
+[Tt]est[Rr]esult*/
+[Bb]uild[Ll]og.*
+
+# .NET SDK and tooling
+project.lock.json
+project.fragment.lock.json
+artifacts/
+*.coverage
+*.coveragexml
+*.nupkg
+*.snupkg
+
+# NuGet packages
+*.nuget.g.props
+*.nuget.g.targets
+
+# JetBrains Rider
+.idea/
+*.sln.iml
+
+# Generated files
+Generated\ Files/
+_Pvt_Extensions/
+*.cache
+*.tmp_proj
+*.log
+
+# Local environment files
+appsettings.Local.json
