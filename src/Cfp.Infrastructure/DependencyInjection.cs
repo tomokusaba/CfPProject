@@ -13,6 +13,7 @@ using Cfp.Infrastructure.Email;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace Cfp.Infrastructure;
 
@@ -22,8 +23,16 @@ public static class DependencyInjection
         this IServiceCollection services,
         IConfiguration configuration)
     {
-        services.AddSingleton(serviceProvider =>
+        services.TryAddSingleton<CosmosClient>(_ =>
         {
+            var connectionString =
+                configuration["Cosmos:ConnectionString"] ??
+                configuration["CosmosConnection"];
+            if (!string.IsNullOrWhiteSpace(connectionString))
+            {
+                return new CosmosClient(connectionString);
+            }
+
             var endpoint = configuration["Cosmos:Endpoint"];
             if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var endpointUri) ||
                 endpointUri.Scheme != Uri.UriSchemeHttps)

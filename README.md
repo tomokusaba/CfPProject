@@ -15,6 +15,7 @@
 
 | Project | Responsibility |
 | --- | --- |
+| `Cfp.AppHost` | .NET Aspire local orchestration for the Web, Functions, Cosmos DB Emulator, and Azurite |
 | `Cfp.Domain` | Conference、CFP、proposal、review、schedule、email 状態遷移 |
 | `Cfp.Application` | Use cases、conference authorization、persistence / email ports |
 | `Cfp.Contracts` | Versioned MemoryPack HTTP DTOs |
@@ -35,9 +36,23 @@ dotnet test CfpProject.sln --no-build
 
 No production event, user, credential, or secret data is included in the repository.
 
-## Local configuration
+## Aspire でのローカルデバッグ
 
-Install Azure Functions Core Tools v4 and Azurite. The ignored file `src/Cfp.Functions/local.settings.json` needs local values similar to:
+Docker Desktop（Linux containers）、.NET 10 SDK、Azure Functions Core Tools v4 をインストールし、次を実行します。Visual Studio では `Cfp.AppHost` をスタートアッププロジェクトにします。
+
+```powershell
+dotnet run --project src\Cfp.AppHost\Cfp.AppHost.csproj
+```
+
+AppHost は WebAssembly 開発サーバー（`http://localhost:5094`）、Functions（`http://localhost:7071`）、Cosmos DB Emulator、Azurite を起動します。Cosmos DB は `cfp` database と本番と同じ partition key の6 container を作成し、AppHost が emulator の接続情報を Functions に渡します。Azurite は Functions host storage／Queue trigger に使用します。AppHost Dashboard から各 resource の状態、ログ、Web UI を確認できます。`src\Cfp.Web\wwwroot\appsettings.Development.json` と Functions の launch profile はこれらの固定 localhost port と CORS origin を合わせています。
+
+Cosmos DB Emulator は TLS を使います。接続時に証明書エラーが出た場合は [Microsoft の手順](https://learn.microsoft.com/azure/cosmos-db/how-to-develop-emulator#import-the-emulators-tlsssl-certificate)で emulator の証明書を信頼済みストアに登録してください。SDK の TLS 検証を無効化しないでください。
+
+Functions のローカル実行では Easy Auth が提供されません。公開 API／画面と Cosmos DB を使う基本フローはデバッグできますが、保護された運営・speaker・reviewer API の認証は Entra External ID と Easy Auth を構成した環境で確認してください。ACS Email は emulator 化していないため、一括メールを試す場合は `Communication__Endpoint` と検証済み `Communication__SenderAddress`、および開発者 ID の ACS Email Sender 権限も必要です。
+
+## Aspire を使わない Functions のローカル設定
+
+Aspire を使わず `func start` で Functions 単体を起動する場合は、Azure Functions Core Tools v4 と Azurite を用意し、ignored file `src\Cfp.Functions\local.settings.json` に環境に応じた値を設定します。以下は Azure Cosmos DB と ACS を使う例です。Aspire から起動する場合、Cosmos／host storage の設定は AppHost が注入します。
 
 ```json
 {
@@ -54,7 +69,7 @@ Install Azure Functions Core Tools v4 and Azurite. The ignored file `src/Cfp.Fun
 }
 ```
 
-Run `az login` and assign the developer identity Cosmos DB data-plane access and, when testing sends, the ACS Email Sender role. `DefaultAzureCredential` is used locally; do **not** put Cosmos keys, ACS connection strings, or other credentials in the browser project. The sender address must be verified by ACS or campaign preview returns a configuration error. The WebAssembly development API URL is `http://localhost:7071/`; production requires the Functions HTTPS origin.
+Run `az login` and assign the developer identity Cosmos DB data-plane access and, when testing sends, the ACS Email Sender role. Standalone Functions use `DefaultAzureCredential` for Azure Cosmos DB; do **not** put Cosmos keys, ACS connection strings, or other credentials in the browser project. The sender address must be verified by ACS or campaign preview returns a configuration error.
 
 All values in `wwwroot/appsettings.json` are public. Configure:
 
