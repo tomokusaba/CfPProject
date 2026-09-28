@@ -38,13 +38,13 @@ No production event, user, credential, or secret data is included in the reposit
 
 ## Aspire でのローカルデバッグ
 
-Docker Desktop（Linux containers）、.NET 10 SDK、Azure Functions Core Tools v4 をインストールし、次を実行します。Visual Studio では `Cfp.AppHost` をスタートアッププロジェクトにします。
+Docker Desktop（Linux containers）または Podman、.NET 10 SDK、Azure Functions Core Tools v4 をインストールし、次を実行します。Visual Studio では `Cfp.AppHost` をスタートアッププロジェクトにします。AppHost の launch profile はこの開発環境に合わせて Podman を選択しています。Docker Desktop を使う場合は `ASPIRE_CONTAINER_RUNTIME` の指定を外してください。Core Tools を IDE／terminal の起動後にインストールした場合は、それらを再起動して `func --version` が実行できることを確認してください。
 
 ```powershell
 dotnet run --project src\Cfp.AppHost\Cfp.AppHost.csproj
 ```
 
-AppHost は WebAssembly 開発サーバー（`http://localhost:5094`）、Functions（`http://localhost:7071`）、Cosmos DB Emulator、Azurite を起動します。Cosmos DB は `cfp` database と本番と同じ partition key の6 container を作成し、AppHost が emulator の接続情報を Functions に渡します。Azurite は Functions host storage／Queue trigger に使用します。AppHost Dashboard から各 resource の状態、ログ、Web UI を確認できます。`src\Cfp.Web\wwwroot\appsettings.Development.json` と Functions の launch profile はこれらの固定 localhost port と CORS origin を合わせています。
+AppHost は WebAssembly 開発サーバー（`http://localhost:5094`）、Functions（`http://localhost:7071`）、Cosmos DB Emulator、Azurite を起動します。Cosmos DB は `cfp` database と本番と同じ partition key の6 container を作成し、AppHost が emulator の接続情報を Functions に渡します。Azurite は Functions host storage／Queue trigger に使用します。AppHost Dashboard から各 resource の状態、ログ、Web UI を確認できます。`src\Cfp.Web\wwwroot\appsettings.Development.json` と Functions の launch profile はこれらの固定 localhost port と CORS origin を合わせています。Podman on WSL で `netavark`／`nftables` の起動エラーが出る場合は、Podman のネットワークバックエンドを修正するか Docker Desktop を使用してください。AppHost はコンテナ tunnel を無効化しており、この構成では Functions／Web がコンテナ外で起動し、Cosmos／Storage emulator に接続します。
 
 Cosmos DB Emulator は TLS を使います。接続時に証明書エラーが出た場合は [Microsoft の手順](https://learn.microsoft.com/azure/cosmos-db/how-to-develop-emulator#import-the-emulators-tlsssl-certificate)で emulator の証明書を信頼済みストアに登録してください。SDK の TLS 検証を無効化しないでください。
 
