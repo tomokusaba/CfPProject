@@ -129,7 +129,7 @@ Domain は時刻、状態遷移、値の妥当性等の純粋な業務ルール�
 | `DecideProposalHandler` | 採否と理由を確定し、監査イベント・通知 outbox を同じ会議パーティションに記録する。 |
 | `GetConferenceScheduleHandler` / `SaveScheduleDraftHandler` / `PublishScheduleHandler` | 会議の日程を取得し、配置競合を検証して保存・公開する。 |
 | `ListConferenceAuditEventsHandler` | 認可済み会議の監査履歴をページングして返す。 |
-| `PreviewTargetedEmailHandler` / `SendTargetedEmailHandler` / `GetEmailHistoryHandler` | 宛先・件数・送信内容のプレビュー、recipient user ID ごとの outbox を持つ campaign 作成、送信状態の取得を行う。送信前に対象者 snapshot を固定し、送信時にも任意連絡への同意・配信抑止を確認する。 |
+| `PreviewTargetedEmailHandler` / `SendTargetedEmailHandler` / `EmailManagementFunctions.GetEmailHistory` | 送信者・宛先・件数・送信内容のプレビュー、recipient user ID ごとの outbox を持つ campaign 作成、送信状態の取得を行う。送信前に対象者 snapshot を固定し、送信時にも任意連絡への同意・配信抑止を確認する。 |
 | `EnqueueEmailOutboxItemHandler` | change feed の outbox 変更を Queue job に変換する。 |
 | `DispatchEmailOutboxItemHandler` | Queue job から outbox を取得し、ETag 条件付きで `Ready → Sending` を取得して attempt ID / lease を保存した後に送信する。lease 切れの `Sending` は `Unknown` にし、自動送信しない。 |
 | `HandleEmailDeliveryReportHandler` | Event Grid event の source/type/status を検証し、provider message ID から outbox を解決して ETag 条件付きで冪等更新する。`Accepted` による terminal 状態の上書きを防ぎ、矛盾する terminal event は anomaly として記録する。 |
@@ -205,7 +205,7 @@ Function class は trigger input を検証可能な request/DTO に変換し、A
 | `ConferenceAdministrationFunctions` | 会議作成・設定、メンバー、募集種別、応募一覧・詳細の管理 endpoint。すべて会議単位の role を検証する。 |
 | `ProposalReviewFunctions` | 審査者割当、担当一覧、審査提出、採否決定 endpoint。Reviewer は割当対象以外へアクセスできない。 |
 | `TimetableFunctions` | 日程取得、部屋／トラック設定、slot 保存、プレビュー、公開 endpoint。 |
-| `EmailManagementFunctions` | テンプレート参照、対象者プレビュー、確認済みの個別・一括送信受付、履歴 endpoint。HTTP 処理ではメールを同期送信しない。 |
+| `EmailManagementFunctions` | 対象者プレビュー（`POST .../mail/preview`）、確認送信（`POST .../mail`）、メール履歴 endpoint。preview は `Idempotency-Key` で固定し、確認は preview の `ETag` を `If-Match` で送り、送信理由を監査する。HTTP 処理ではメールを同期送信しない。 |
 | `EmailOutboxChangeFeedFunction` | Cosmos DB change feed trigger。`type == emailOutbox && status == Ready` の item のみ Queue job にする。change feed の重複発行は許容し、`functionLeases` を使う。 |
 | `EmailDispatchFunction` | Queue Storage trigger。outbox を読み、送信直前に最新の同意・宛先 suppression を確認してから条件付き状態遷移・送信を行う。重複配信と poison queue を前提にする。 |
 | `EmailDeliveryReportFunction` | Event Grid trigger。許可した ACS resource/type の配信レポートを受け、provider message ID lookup から outbox を更新する。重複 event は idempotent に処理する。 |
@@ -271,7 +271,7 @@ HTTP Functions は Easy Auth の公開 GET 要件と両立させるため、未�
 | `POST /api/v1/manage/conferences/{id}/schedule/publish` | `TimetableFunctions` | `PublishScheduleHandler` | 当該会議の公開権限者 |
 | `POST /api/v1/manage/conferences/{id}/mail/preview` | `EmailManagementFunctions` | `PreviewTargetedEmailHandler` | ConferenceOwner / Organizer |
 | `POST /api/v1/manage/conferences/{id}/mail` | `EmailManagementFunctions` | `SendTargetedEmailHandler` | ConferenceOwner / Organizer |
-| `GET /api/v1/manage/conferences/{id}/mail` | `EmailManagementFunctions` | `GetEmailHistoryHandler` | ConferenceOwner / Organizer |
+| `GET /api/v1/manage/conferences/{id}/mail` | `EmailManagementFunctions` | `IEmailOutboxStore.ListByConferenceAsync` | ConferenceOwner / Organizer |
 
 SNS crawler 用 metadata route は `/api/v1` 外で、MemoryPack body を使わない。
 

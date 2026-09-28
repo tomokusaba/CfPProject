@@ -1,0 +1,6 @@
+{
+  "appHost": {
+    "path": "Cfp.AppHost.csproj"
+  },
+  "channel": "daily"
+}

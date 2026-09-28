@@ -1,0 +1,394 @@
+﻿@page "/manage/conferences/{ConferenceId}/mail"
+@attribute [Authorize]
+@inject CfpProtectedApiClient Api
+
+<PageTitle>メール配信履歴 | カンファレンス CFP</PageTitle>
+
+<p class="breadcrumb">
+    <a href="@($"/manage/conferences/{Uri.EscapeDataString(ConferenceId)}")">運営ダッシュボード</a>
+    <span aria-hidden="true">/</span>
+    <span>メール配信履歴</span>
+</p>
+
+<section class="management-page" aria-labelledby="email-history-heading">
+    <p class="eyebrow">EMAIL DELIVERY</p>
+    <h1 id="email-history-heading">メール配信履歴</h1>
+    <p class="form-intro">「受付」はメール配信完了を意味しません。配信結果が不明な通知は自動再送しません。</p>
+
+    <section class="email-campaign-panel" aria-labelledby="email-campaign-heading">
+        <h2 id="email-campaign-heading">対象者への一括メール</h2>
+        <p>選択した応募ステータスの応募者から送信対象を固定し、確認済みアドレス・運営連絡への同意・配信抑止を確認してプレビューします。1回の送信は最大50人です。</p>
+        @if (_campaignStatusMessage is not null)
+        {
+            <p class="success-panel" role="status" aria-live="polite">@_campaignStatusMessage</p>
+        }
+        @if (_campaignErrorMessage is not null)
+        {
+            <div class="error-panel" role="alert"><p>@_campaignErrorMessage</p></div>
+        }
+
+        <form class="form-layout" @onsubmit="PreviewCampaignAsync" @onsubmit:preventDefault>
+            <fieldset class="form-field email-campaign-statuses">
+                <legend>対象にする応募ステータス</legend>
+                <label><input type="checkbox" @bind="_targetSubmitted" disabled="@CampaignFieldsDisabled" /> 応募受付済み</label>
+                <label><input type="checkbox" @bind="_targetUnderReview" disabled="@CampaignFieldsDisabled" /> 審査中</label>
+                <label><input type="checkbox" @bind="_targetAccepted" disabled="@CampaignFieldsDisabled" /> 採択</label>
+                <label><input type="checkbox" @bind="_targetRejected" disabled="@CampaignFieldsDisabled" /> 不採択</label>
+            </fieldset>
+            <div class="form-field">
+                <label for="email-campaign-subject">件名 <span class="required-label">必須</span></label>
+                <input id="email-campaign-subject" @bind="_campaignSubject" maxlength="200" required disabled="@CampaignFieldsDisabled" />
+                <p class="field-help">200文字以内。HTMLではなくプレーンテキストで送信します。</p>
+            </div>
+            <div class="form-field">
+                <label for="email-campaign-body">本文 <span class="required-label">必須</span></label>
+                <textarea id="email-campaign-body" @bind="_campaignBody" rows="8" maxlength="5000" required disabled="@CampaignFieldsDisabled"></textarea>
+                <p class="field-help">5,000文字以内。応募者の個人情報や審査メモを不要に含めないでください。</p>
+            </div>
+            <div class="form-actions">
+                @if (_campaignPreview is null)
+                {
+                    <button class="primary-button" type="submit" disabled="@_isCampaignWorking">
+                        @(_isCampaignWorking ? "プレビューを作成中…" : "宛先と内容をプレビュー")
+                    </button>
+                }
+                else
+                {
+                    <button class="secondary-button" type="button" @onclick="DiscardPreview" disabled="@(_isCampaignWorking || _sendOutcomeUnknown)">
+                        プレビューを破棄して編集
+                    </button>
+                }
+            </div>
+
+            @if (_campaignPreview is not null)
+            {
+                <section class="email-campaign-preview" aria-labelledby="email-campaign-preview-heading">
+                    <h3 id="email-campaign-preview-heading">送信前の確認</h3>
+                    <p role="status">
+                        対象ステータス: @FormatProposalStatuses(_campaignPreview.ProposalStatuses)。
+                        送信対象: @_campaignPreview.EligibleRecipientCount 人、
+                        対象外: @_campaignPreview.ExcludedRecipientCount 人。
+                        この宛先 snapshot は <time datetime="@_campaignPreview.ExpiresAtUtc">@FormatDate(_campaignPreview.ExpiresAtUtc)</time> まで有効です。
+                    </p>
+                    <dl>
+                        <dt>送信者</dt>
+                        <dd>@_campaignPreview.SenderAddress</dd>
+                        <dt>件名</dt>
+                        <dd>@_campaignPreview.Subject</dd>
+                        <dt>本文</dt>
+                        <dd class="email-campaign-preview-body">@_campaignPreview.PlainTextContent</dd>
+                    </dl>
+                    <div class="form-field">
+                        <label for="email-campaign-reason">送信理由 <span class="required-label">必須</span></label>
+                        <textarea id="email-campaign-reason" @bind="_sendReason" rows="3" maxlength="500" required disabled="@(_isCampaignWorking || _sendOutcomeUnknown)"></textarea>
+                        <p class="field-help">監査履歴に記録します（500文字以内）。</p>
+                    </div>
+                    <label class="email-campaign-confirmation">
+                        <input type="checkbox" @bind="_confirmSend" disabled="@(_isCampaignWorking || _sendOutcomeUnknown)" />
+                        上記の宛先人数・件名・本文を確認し、この内容で送信します
+                    </label>
+                    @if (_sendOutcomeUnknown)
+                    {
+                        <p class="field-help" role="status">
+                            送信結果が不明です。重複送信を避けるため、同じプレビュー・送信理由で再試行してください。編集とプレビュー破棄はロックされています。
+                        </p>
+                    }
+                    <div class="form-actions">
+                        <button class="primary-button" type="button" @onclick="SendCampaignAsync"
+                                disabled="@(_isCampaignWorking || !_confirmSend || string.IsNullOrWhiteSpace(_sendReason) || _campaignPreview.EligibleRecipientCount == 0)">
+                            @(_isCampaignWorking ? "送信キューに登録中…" : "確認して送信")
+                        </button>
+                    </div>
+                </section>
+            }
+        </form>
+    </section>
+
+    @if (_isLoading)
+    {
+        <p class="state-message" role="status" aria-live="polite">配信履歴を読み込んでいます…</p>
+    }
+    else if (_errorMessage is not null)
+    {
+        <div class="error-panel" role="alert">
+            <div><h2>配信履歴を表示できません</h2><p>@_errorMessage</p></div>
+            <button class="secondary-button" @onclick="RetryAsync">再試行</button>
+        </div>
+    }
+    else if (_items.Count == 0)
+    {
+        <div class="empty-panel">
+            <span class="empty-icon" aria-hidden="true">○</span>
+            <h2>配信履歴はありません</h2>
+            <p>受付・採否通知が作成されると状態が表示されます。</p>
+        </div>
+    }
+    else
+    {
+        <div class="table-scroll">
+            <table class="data-table">
+                <caption>受信者メールアドレスは表示せず、内部ユーザー ID と配信状態を表示します。</caption>
+                <thead>
+                    <tr>
+                        <th scope="col">作成日時</th>
+                        <th scope="col">種別</th>
+                        <th scope="col">宛先 ID</th>
+                        <th scope="col">状態</th>
+                        <th scope="col">理由</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var item in _items)
+                    {
+                        <tr>
+                            <td><time datetime="@item.CreatedAtUtc">@FormatDate(item.CreatedAtUtc)</time></td>
+                            <td>@GetTemplateText(item.TemplateId)</td>
+                            <td><code>@item.RecipientUserId</code></td>
+                            <td><span class="@GetStatusClass(item.Status)">@GetStatusText(item.Status)</span></td>
+                            <td>@item.StatusReason</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        @if (!string.IsNullOrEmpty(_continuationToken))
+        {
+            <div class="load-more">
+                <button class="secondary-button" @onclick="LoadMoreAsync" disabled="@_isLoading">さらに表示</button>
+            </div>
+        }
+    }
+</section>
+
+@code {
+    [Parameter]
+    public string ConferenceId { get; set; } = string.Empty;
+
+    private readonly List<EmailOutboxSummaryDto> _items = [];
+    private string? _continuationToken;
+    private string? _errorMessage;
+    private bool _isLoading = true;
+    private string _campaignSubject = string.Empty;
+    private string _campaignBody = string.Empty;
+    private string _sendReason = string.Empty;
+    private string? _campaignStatusMessage;
+    private string? _campaignErrorMessage;
+    private EmailCampaignPreviewDto? _campaignPreview;
+    private Guid _confirmationId;
+    private bool _targetSubmitted = true;
+    private bool _targetUnderReview = true;
+    private bool _targetAccepted;
+    private bool _targetRejected;
+    private bool _confirmSend;
+    private bool _isCampaignWorking;
+    private bool _sendOutcomeUnknown;
+    private bool CampaignFieldsDisabled => _isCampaignWorking || _campaignPreview is not null;
+
+    protected override Task OnParametersSetAsync() => LoadAsync();
+    private Task RetryAsync() => LoadAsync();
+    private Task LoadMoreAsync() => LoadAsync(append: true);
+
+    private async Task PreviewCampaignAsync()
+    {
+        _campaignErrorMessage = null;
+        _campaignStatusMessage = null;
+        _isCampaignWorking = true;
+        try
+        {
+            var statuses = new List<string>();
+            if (_targetSubmitted) statuses.Add("Submitted");
+            if (_targetUnderReview) statuses.Add("UnderReview");
+            if (_targetAccepted) statuses.Add("Accepted");
+            if (_targetRejected) statuses.Add("Rejected");
+            if (statuses.Count == 0)
+            {
+                _campaignErrorMessage = "対象にする応募ステータスを1つ以上選択してください。";
+                return;
+            }
+
+            _campaignPreview = await Api.PreviewTargetedEmailAsync(
+                ConferenceId,
+                new PreviewTargetedEmailRequestDto
+                {
+                    ProposalStatuses = statuses,
+                    Subject = _campaignSubject,
+                    PlainTextContent = _campaignBody
+                },
+                Guid.NewGuid());
+            _confirmationId = Guid.NewGuid();
+            _sendReason = string.Empty;
+            _confirmSend = false;
+            _sendOutcomeUnknown = false;
+            _campaignStatusMessage = "宛先 snapshot と内容を作成しました。送信前に人数・本文を確認してください。";
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (CfpApiException exception)
+        {
+            _campaignErrorMessage = exception.UserMessage;
+        }
+        catch (HttpRequestException)
+        {
+            _campaignErrorMessage = "通信に失敗しました。接続を確認して、もう一度お試しください。";
+        }
+        catch (InvalidOperationException)
+        {
+            _campaignErrorMessage = "メール機能の設定を確認できません。運営者にお問い合わせください。";
+        }
+        finally
+        {
+            _isCampaignWorking = false;
+        }
+    }
+
+    private async Task SendCampaignAsync()
+    {
+        if (_campaignPreview is null || !_confirmSend || string.IsNullOrWhiteSpace(_sendReason))
+        {
+            return;
+        }
+
+        _campaignErrorMessage = null;
+        _campaignStatusMessage = null;
+        _isCampaignWorking = true;
+        try
+        {
+            var result = await Api.SendTargetedEmailAsync(
+                ConferenceId,
+                new SendTargetedEmailRequestDto
+                {
+                    CampaignId = _campaignPreview.CampaignId,
+                    Reason = _sendReason
+                },
+                _campaignPreview.ETag,
+                _confirmationId);
+            _campaignStatusMessage = $"{result.RecipientCount} 人分のメールを送信キューに登録しました。配信結果は下の履歴で確認してください。";
+            _campaignPreview = null;
+            _confirmationId = Guid.Empty;
+            _confirmSend = false;
+            _sendOutcomeUnknown = false;
+            await LoadAsync();
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (CfpApiException exception)
+        {
+            _campaignErrorMessage = exception.UserMessage;
+            _sendOutcomeUnknown =
+                (int)exception.StatusCode >= 500 ||
+                exception.StatusCode == HttpStatusCode.RequestTimeout;
+        }
+        catch (HttpRequestException)
+        {
+            _sendOutcomeUnknown = true;
+            _campaignErrorMessage = "通信結果を確認できません。再試行する場合は同じプレビューから操作してください。";
+        }
+        catch (InvalidOperationException)
+        {
+            _campaignErrorMessage = "メール機能の設定を確認できません。運営者にお問い合わせください。";
+        }
+        finally
+        {
+            _isCampaignWorking = false;
+        }
+    }
+
+    private void DiscardPreview()
+    {
+        _campaignPreview = null;
+        _confirmationId = Guid.Empty;
+        _sendReason = string.Empty;
+        _confirmSend = false;
+        _sendOutcomeUnknown = false;
+        _campaignErrorMessage = null;
+        _campaignStatusMessage = "プレビューを破棄しました。条件や本文を編集できます。";
+    }
+
+    private async Task LoadAsync(bool append = false)
+    {
+        _isLoading = true;
+        _errorMessage = null;
+        try
+        {
+            var result = await Api.GetEmailHistoryAsync(
+                ConferenceId,
+                continuationToken: append ? _continuationToken : null);
+            if (!append)
+            {
+                _items.Clear();
+            }
+
+            _items.AddRange(result.Items);
+            _continuationToken = result.ContinuationToken;
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (CfpApiException exception)
+        {
+            _errorMessage = exception.UserMessage;
+        }
+        catch (HttpRequestException)
+        {
+            _errorMessage = "通信に失敗しました。接続を確認して、もう一度お試しください。";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private static string GetStatusText(string status) => status switch
+    {
+        "Pending" => "準備中",
+        "Ready" => "送信待ち",
+        "Sending" => "送信中",
+        "Accepted" => "送信受付",
+        "Delivered" => "配信済み",
+        "Bounced" => "バウンス",
+        "Suppressed" => "配信抑止",
+        "FilteredSpam" => "迷惑メール判定",
+        "Quarantined" => "隔離",
+        "Failed" => "失敗",
+        "Unknown" => "結果不明",
+        "Cancelled" => "キャンセル",
+        _ => "状態不明"
+    };
+
+    private static string GetStatusClass(string status) => status switch
+    {
+        "Delivered" => "status-pill status-open",
+        "Ready" or "Sending" or "Accepted" => "status-pill status-scheduled",
+        "Failed" or "Bounced" or "Unknown" => "status-pill status-closed",
+        _ => "status-pill status-unpublished"
+    };
+
+    private static string GetTemplateText(string templateId) => templateId switch
+    {
+        "proposal-received" => "応募受付",
+        "proposal-accepted" => "採択通知",
+        "proposal-rejected" => "不採択通知",
+        "conference-operations" => "一括運営連絡",
+        _ => "トランザクション通知"
+    };
+
+    private static string FormatProposalStatuses(IEnumerable<string> statuses) =>
+        string.Join("、", statuses.Select(status => status switch
+        {
+            "Submitted" => "応募受付済み",
+            "UnderReview" => "審査中",
+            "Accepted" => "採択",
+            "Rejected" => "不採択",
+            _ => "不明"
+        }));
+
+    private static string FormatDate(string value) =>
+        DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var instant)
+            ? instant.ToLocalTime().ToString("yyyy年M月d日 H:mm", CultureInfo.GetCultureInfo("ja-JP"))
+            : value;
+}

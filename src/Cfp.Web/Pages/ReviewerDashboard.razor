@@ -1,0 +1,225 @@
+﻿@page "/reviewer"
+@attribute [Authorize]
+@inject CfpProtectedApiClient Api
+
+<PageTitle>担当審査 | カンファレンス CFP</PageTitle>
+
+<section class="management-page" aria-labelledby="reviewer-heading">
+    <p class="eyebrow">REVIEWER WORKSPACE</p>
+    <h1 id="reviewer-heading">担当審査</h1>
+    <p class="form-intro">割り当てられた応募だけが表示されます。利益相反がある場合は、レビューを提出する前に申告してください。</p>
+
+    @if (_isLoading)
+    {
+        <p class="state-message" role="status" aria-live="polite">担当応募を読み込んでいます…</p>
+    }
+    else if (_errorMessage is not null)
+    {
+        <div class="error-panel" role="alert">
+            <div><h2>担当応募を読み込めません</h2><p>@_errorMessage</p></div>
+            <button class="secondary-button" @onclick="RetryAsync">再試行</button>
+        </div>
+    }
+    else if (_tasks.Count == 0)
+    {
+        <div class="empty-panel">
+            <span class="empty-icon" aria-hidden="true">○</span>
+            <h2>現在、担当している応募はありません</h2>
+            <p>Organizer が審査を割り当てると、このページに表示されます。</p>
+        </div>
+    }
+    else
+    {
+        <div class="review-task-list">
+            @foreach (var task in _tasks)
+            {
+                var form = GetForm(task);
+                <article class="review-task-card">
+                    <div class="card-topline">
+                        <span class="status-pill status-scheduled">@task.ProposalStatus</span>
+                        <span class="field-help">応募 ID: @task.ProposalId</span>
+                    </div>
+                    <h2>@GetProposalTitle(task)</h2>
+                    <dl class="review-answers">
+                        @foreach (var answer in task.Answers.OrderBy(pair => pair.Key, StringComparer.Ordinal))
+                        {
+                            <div><dt>@answer.Key</dt><dd>@answer.Value</dd></div>
+                        }
+                    </dl>
+
+                    @if (task.HasConflictOfInterest)
+                    {
+                        <div class="error-panel" role="status">
+                            <p>利益相反を申告済みです。この応募のレビューは受け付けません。</p>
+                        </div>
+                    }
+                    else
+                    {
+                        <EditForm Model="form" OnValidSubmit="() => SaveReviewAsync(task)" class="form-layout">
+                            <DataAnnotationsValidator />
+                            <div class="form-field">
+                                <label for="@($"review-score-{task.ProposalId}")">評価（1〜5） <span class="required-label">必須</span></label>
+                                <InputNumber id="@($"review-score-{task.ProposalId}")" @bind-Value="form.Score" min="1" max="5" />
+                                <ValidationMessage For="@(() => form.Score)" />
+                            </div>
+                            <div class="form-field">
+                                <label for="@($"review-comment-{task.ProposalId}")">レビューコメント <span class="required-label">必須</span></label>
+                                <InputTextArea id="@($"review-comment-{task.ProposalId}")" @bind-Value="form.Comment" maxlength="10000" rows="5" />
+                                <ValidationMessage For="@(() => form.Comment)" />
+                            </div>
+                            <div class="checkbox-field">
+                                <InputCheckbox id="@($"review-conflict-{task.ProposalId}")" @bind-Value="form.HasConflictOfInterest" />
+                                <label for="@($"review-conflict-{task.ProposalId}")">この応募に利益相反があります</label>
+                            </div>
+                            @if (form.ErrorMessage is not null)
+                            {
+                                <div class="error-panel" role="alert"><p>@form.ErrorMessage</p></div>
+                            }
+                            @if (form.StatusMessage is not null)
+                            {
+                                <p class="state-message" role="status" aria-live="polite">@form.StatusMessage</p>
+                            }
+                            <div class="form-actions">
+                                <button class="primary-button" type="submit" disabled="@form.IsSaving">
+                                    @(form.IsSaving ? "送信中…" : form.HasConflictOfInterest ? "利益相反を申告" : "レビューを保存")
+                                </button>
+                            </div>
+                        </EditForm>
+                    }
+                </article>
+            }
+        </div>
+        @if (!string.IsNullOrEmpty(_continuationToken))
+        {
+            <div class="load-more">
+                <button class="secondary-button" @onclick="LoadMoreAsync" disabled="@_isLoading">さらに表示</button>
+            </div>
+        }
+    }
+</section>
+
+@code {
+    private readonly List<ReviewTaskDto> _tasks = [];
+    private readonly Dictionary<string, ReviewForm> _forms = new(StringComparer.Ordinal);
+    private string? _continuationToken;
+    private string? _errorMessage;
+    private bool _isLoading = true;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private Task RetryAsync() => LoadAsync();
+    private Task LoadMoreAsync() => LoadAsync(append: true);
+
+    private async Task LoadAsync(bool append = false)
+    {
+        _isLoading = true;
+        _errorMessage = null;
+        try
+        {
+            var result = await Api.ListMyReviewAssignmentsAsync(
+                continuationToken: append ? _continuationToken : null);
+            if (!append)
+            {
+                _tasks.Clear();
+                _forms.Clear();
+            }
+
+            _tasks.AddRange(result.Tasks);
+            _continuationToken = result.ContinuationToken;
+            foreach (var task in result.Tasks)
+            {
+                _forms[task.ProposalId] = new ReviewForm
+                {
+                    Score = task.ReviewScore ?? 3,
+                    Comment = task.ReviewComment ?? string.Empty,
+                    HasConflictOfInterest = task.HasConflictOfInterest,
+                    ETag = task.ReviewETag
+                };
+            }
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (CfpApiException exception)
+        {
+            _errorMessage = exception.UserMessage;
+        }
+        catch (HttpRequestException)
+        {
+            _errorMessage = "通信に失敗しました。接続を確認して、もう一度お試しください。";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private ReviewForm GetForm(ReviewTaskDto task) => _forms[task.ProposalId];
+
+    private async Task SaveReviewAsync(ReviewTaskDto task)
+    {
+        var form = GetForm(task);
+        form.ErrorMessage = null;
+        form.StatusMessage = null;
+        form.IsSaving = true;
+        try
+        {
+            var result = await Api.SubmitReviewAsync(
+                task.ConferenceId,
+                task.ProposalId,
+                new ReviewSubmissionRequestDto
+                {
+                    Score = form.Score,
+                    Comment = form.Comment,
+                    HasConflictOfInterest = form.HasConflictOfInterest
+                },
+                form.ETag);
+            if (result.ConflictDeclared)
+            {
+                task.HasConflictOfInterest = true;
+                form.StatusMessage = "利益相反を記録しました。レビューは提出されていません。";
+            }
+            else
+            {
+                form.ETag = result.ETag;
+                form.StatusMessage = "レビューを保存しました。";
+            }
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (CfpApiException exception)
+        {
+            form.ErrorMessage = exception.UserMessage;
+        }
+        catch (HttpRequestException)
+        {
+            form.ErrorMessage = "通信に失敗しました。保存結果が不明な場合は再読み込みしてください。";
+        }
+        finally
+        {
+            form.IsSaving = false;
+        }
+    }
+
+    private static string GetProposalTitle(ReviewTaskDto task) =>
+        task.Answers.TryGetValue("title", out var title) && !string.IsNullOrWhiteSpace(title)
+            ? title
+            : "タイトル未設定の応募";
+
+    private sealed class ReviewForm
+    {
+        [Range(1, 5)]
+        public int Score { get; set; } = 3;
+        [Required]
+        [StringLength(10_000)]
+        public string Comment { get; set; } = string.Empty;
+        public bool HasConflictOfInterest { get; set; }
+        public string? ETag { get; set; }
+        public string? ErrorMessage { get; set; }
+        public string? StatusMessage { get; set; }
+        public bool IsSaving { get; set; }
+    }
+}

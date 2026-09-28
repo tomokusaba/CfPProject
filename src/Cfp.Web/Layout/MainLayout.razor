@@ -1,0 +1,39 @@
+﻿@inherits LayoutComponentBase
+
+<div class="app-shell">
+    <header class="site-header">
+        <a class="brand" href="/" aria-label="カンファレンス CFP ホーム">
+            <span class="brand-mark" aria-hidden="true">CFP</span>
+            <span>カンファレンス CFP</span>
+        </a>
+        <nav aria-label="メインナビゲーション">
+            <a href="/">カンファレンスを探す</a>
+            <AuthorizeView>
+                <Authorized>
+                    <a href="/my/proposals">自分の応募</a>
+                    <a href="/account/profile">プロフィール</a>
+                    <a href="/manage/conferences">運営カンファレンス</a>
+                    <a href="/manage/conferences/new">カンファレンスを作成</a>
+                    <a href="/reviewer">担当審査</a>
+                </Authorized>
+            </AuthorizeView>
+        </nav>
+        <AuthorizeView>
+            <Authorized>
+                <a class="header-action" href="/authentication/logout">ログアウト</a>
+            </Authorized>
+            <NotAuthorized>
+                <a class="header-action" href="/authentication/login">ログイン</a>
+            </NotAuthorized>
+        </AuthorizeView>
+    </header>
+
+    <main id="main-content" class="site-main">
+        @Body
+    </main>
+
+    <footer class="site-footer">
+        <span>カンファレンス CFP</span>
+        <span>募集から当日のプログラムまで。</span>
+    </footer>
+</div>

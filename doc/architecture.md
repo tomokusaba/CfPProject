@@ -199,7 +199,7 @@ flowchart LR
 - Azure Communication Services Email をトランザクションメールサービスとして使用する。独自ドメインから送る本番運用では、送信ドメインの所有確認と SPF/DKIM 等の設定を完了する。
 - Functions が Azure Queue Storage に登録したメールジョブを非同期に処理し、Azure Communication Services Email SDK で送信する。
 - API 応答はメールの実配信を待たず、業務操作・outbox 記録の結果を返す。`Accepted` は ACS が受付した状態であり、配送成功ではない。Event Grid の delivery report で `Delivered / Bounced / Suppressed / FilteredSpam / Quarantined / Failed` を更新する。`Delivered` は受信者側 mail transfer agent への引き渡しを表し、受信箱への到達や開封を保証しない。
-- 個別通知は recipient ごとの outbox item とする。一括送信は campaign とし、宛先・本文をプレビュー後に固定し、recipient 単位の outbox を上限付き batch で作成する。fan-out 完了までは送信待ちにし、途中再開は campaign ID による冪等処理とする。
+- 個別通知は recipient ごとの outbox item とする。一括送信は campaign とし、応募状態・宛先・送信者・本文をプレビュー後に固定する。現行 MVP は最大50人の campaign を ETag／operation ID 付きの単一 transactional batch で登録し、campaign・recipient outbox・監査イベントを原子的に作成する。上限を超える場合は送信を拒否し、規模を拡大する際に段階 fan-out と進捗復旧を設計する。
 - Delivery report は provider message ID で引き当て、Event Grid event ID と処理済み状態を保存して重複配信に耐える。宛先の hard bounce / suppression は抑止リストへ反映し、Poison Event の監視・再処理手順を設ける。
 - worker は ETag 条件で outbox を `Ready → Sending` に取得し、attempt ID と lease 時刻を記録してから ACS を呼ぶ。期限切れの `Sending` は重複送信を避けるため `Unknown` とし、自動再送しない。一時障害で未受付を確認できた場合だけ backoff 後に `Ready` へ戻し、恒久エラー・上限到達は poison queue に隔離する。個別再送には監査ログを残す。
 - 大量配信を開始する前に利用制限、送信可能数、独自ドメイン審査、配信停止・バウンスの扱いを確認する。
@@ -217,8 +217,8 @@ flowchart LR
 - 技術検証用の Azure リソース定義は `infra/main.bicep` に置く。Japan East の Functions、Storage、Cosmos DB、Log Analytics、Application Insights と、East Asia の Static Web Apps を作成する。ACS Email は `global` リソースで作成し、データ所在地を Japan にする。
 - Bicep は Cosmos DB Free Tier を有効化し、6 コンテナーが共有するデータベーススループットを 1,000 RU/s に設定する。Free Tier 対象アカウントがサブスクリプションに既に存在する場合は、デプロイ前に利用可否を確認する。
 - Entra External ID の API アプリケーション ID と OIDC メタデータ URL は環境固有のため、Bicep の必須パラメーターとして渡す。認証設定は公開 API を維持するため未認証リクエストを許可し、保護対象 API の認可は Functions 内で行う。
-- Bicep はコアリソース、6 container、Storage/Cosmos DB の data-plane RBAC を作成する。ACS Email の送信権限は最小スコープを確認した上で第二段階 IaC から付与し、Event Grid subscription は Function の公開後に作成する。External ID のアプリ登録・redirect URI と Static Web Apps へのアプリ配置も別途必要である。
-- 現行の `infra/main.bicep` はコアリソースのみを定義し、ACS Email の role assignment と Event Grid subscription は未実装である。Function endpoint を含むコードを発行した後、第二段階 IaC として追加する。
+- `infra/main.bicep` はコアリソース、6 container、Storage/Cosmos DB の data-plane RBAC、ACS Email Sender role assignment を作成する。`emailSenderAddress` は Azure-managed domain の provisioning 後に指定する。Event Grid subscription は Function の公開後に `infra/email-events.bicep` を第二段階で適用する。External ID のアプリ登録・redirect URI と Static Web Apps へのアプリ配置も別途必要である。
+- Event Grid subscription を作成する前に `Cfp.Functions` を発行し、`EmailDeliveryReportFunction` が Functions host に登録されていることを確認する。配信レポートの Event Grid 再試行・dead-letter は Azure 環境で構成・監視する。
 - Azure に反映する前に、対象サブスクリプションで `az deployment group what-if --resource-group <resource-group> --template-file infra/main.bicep --parameters externalIdApiClientId=<api-client-id> externalIdMetadataUrl=<metadata-url>` を実行して変更内容を確認する。
 
 ## 9. コスト方針
@@ -254,6 +254,8 @@ flowchart LR
 3. **審査・採択**: Reviewer 割当、評価・コメント、採否、応募者向け通知、監査履歴。
 4. **タイムテーブル**: Rooms/Tracks、競合チェック、採択セッション配置、公開スケジュール。
 5. **拡張**: プロポーザル検索・お気に入り、複数形式エクスポート、カレンダー連携、追加 SNS 連携、利用状況に基づく RU・コスト最適化。
+
+実装済みのプロジェクト構成・ローカル起動条件・現在の API 範囲は、リポジトリルートの `README.md` を参照する。設計上の Azure tenant / resource 検証は、コード build と分けて記録する。
 
 ## 12. 実装開始前に決める項目
 

@@ -1,0 +1,349 @@
+﻿@page "/manage/conferences/{ConferenceId}/proposal-types"
+@attribute [Authorize]
+@inject CfpProtectedApiClient Api
+
+<PageTitle>募集種別・フォーム | カンファレンス CFP</PageTitle>
+
+<p class="breadcrumb">
+    <a href="@($"/manage/conferences/{Uri.EscapeDataString(ConferenceId)}")">運営ダッシュボード</a>
+    <span aria-hidden="true">/</span>
+    <span>募集種別</span>
+</p>
+
+<section class="management-page" aria-labelledby="proposal-type-heading">
+    <p class="eyebrow">CALL FOR PROPOSALS</p>
+    <div class="section-heading">
+        <div>
+            <h1 id="proposal-type-heading">募集種別・フォーム</h1>
+            <p class="form-intro">提出済み応募が参照するフォーム版は変更せず、編集時は新しい版を作成します。</p>
+        </div>
+        <button class="secondary-button" @onclick="BeginCreate">新しい募集種別</button>
+    </div>
+
+    @if (_isLoading)
+    {
+        <p class="state-message" role="status" aria-live="polite">募集種別を読み込んでいます…</p>
+    }
+    else if (_loadError is not null)
+    {
+        <div class="error-panel" role="alert">
+            <div><h2>募集種別を読み込めません</h2><p>@_loadError</p></div>
+            <button class="secondary-button" @onclick="LoadAsync">再試行</button>
+        </div>
+    }
+    else if (_proposalTypes.Count == 0)
+    {
+        <div class="empty-panel">
+            <span class="empty-icon" aria-hidden="true">○</span>
+            <h2>募集種別がありません</h2>
+            <p>登壇時間とフォーム項目を登録してください。</p>
+        </div>
+    }
+    else
+    {
+        <div class="proposal-type-list">
+            @foreach (var proposalType in _proposalTypes)
+            {
+                <article class="proposal-type-card">
+                    <div class="card-topline">
+                        <span class="status-pill status-scheduled">@proposalType.DurationMinutes 分</span>
+                        <span class="status-pill @(proposalType.IsAcceptingSubmissions ? "status-open" : "status-closed")">
+                            @(proposalType.IsAcceptingSubmissions ? "受付中" : "受付停止中")
+                        </span>
+                    </div>
+                    <h2>@proposalType.Name</h2>
+                    <p class="field-help">フォーム v@proposalType.FormVersion ・ @(proposalType.IsPublic ? "公開" : "非公開")</p>
+                    @if (!string.IsNullOrWhiteSpace(proposalType.Description))
+                    {
+                        <p class="proposal-type-description">@proposalType.Description</p>
+                    }
+                    <button class="secondary-button" @onclick="() => BeginEdit(proposalType)">新しい版を編集</button>
+                </article>
+            }
+        </div>
+    }
+
+    @if (_isEditing)
+    {
+        <section class="form-page form-page-inline" aria-labelledby="proposal-type-form-heading">
+            <p class="eyebrow">FORM VERSION @(_selectedType?.FormVersion + 1 ?? 1)</p>
+            <h2 id="proposal-type-form-heading">@(_selectedType is null ? "募集種別を作成" : "募集種別の新しい版を作成")</h2>
+
+            @if (_saveError is not null)
+            {
+                <div class="error-panel" role="alert"><p>@_saveError</p></div>
+            }
+            @if (_statusMessage is not null)
+            {
+                <p class="state-message" role="status" aria-live="polite">@_statusMessage</p>
+            }
+
+            <EditForm Model="_form" OnValidSubmit="SaveAsync" class="form-layout">
+                <DataAnnotationsValidator />
+                <ValidationSummary class="validation-summary" />
+
+                <div class="form-field">
+                    <label for="type-name">募集種別名 <span class="required-label">必須</span></label>
+                    <InputText id="type-name" @bind-Value="_form.Name" maxlength="120" />
+                    <ValidationMessage For="@(() => _form.Name)" />
+                </div>
+                <div class="form-field">
+                    <label for="type-description">説明</label>
+                    <InputTextArea id="type-description" @bind-Value="_form.Description" maxlength="10000" rows="3" />
+                </div>
+                <div class="form-field">
+                    <label for="type-duration">登壇時間（分） <span class="required-label">必須</span></label>
+                    <InputNumber id="type-duration" @bind-Value="_form.DurationMinutes" min="1" max="480" />
+                    <ValidationMessage For="@(() => _form.DurationMinutes)" />
+                </div>
+                <div class="checkbox-field">
+                    <InputCheckbox id="type-accepting" @bind-Value="_form.IsAcceptingSubmissions" />
+                    <label for="type-accepting">この募集種別で応募を受け付ける</label>
+                </div>
+                <div class="checkbox-field">
+                    <InputCheckbox id="type-public" @bind-Value="_form.IsPublic" />
+                    <label for="type-public">公開募集ページに表示する</label>
+                </div>
+
+                <fieldset class="form-field">
+                    <legend>応募フォーム項目</legend>
+                    @foreach (var field in _form.Fields)
+                    {
+                        <div class="dynamic-field">
+                            <div class="dynamic-field-heading">
+                                <h3>フォーム項目</h3>
+                                <button type="button" class="text-button"
+                                        aria-label="@($"{field.Label} の項目を削除")"
+                                        @onclick="() => RemoveField(field)">削除</button>
+                            </div>
+                            <div class="date-grid">
+                                <div class="form-field">
+                                    <label for="@($"field-id-{field.InternalId}")">項目 ID</label>
+                                    <InputText id="@($"field-id-{field.InternalId}")" @bind-Value="field.Id" maxlength="80" />
+                                </div>
+                                <div class="form-field">
+                                    <label for="@($"field-label-{field.InternalId}")">表示ラベル</label>
+                                    <InputText id="@($"field-label-{field.InternalId}")" @bind-Value="field.Label" maxlength="200" />
+                                </div>
+                            </div>
+                            <div class="date-grid">
+                                <div class="form-field">
+                                    <label for="@($"field-kind-{field.InternalId}")">入力形式</label>
+                                    <InputSelect id="@($"field-kind-{field.InternalId}")" @bind-Value="field.Kind">
+                                        <option value="ShortText">短いテキスト</option>
+                                        <option value="LongText">長文</option>
+                                        <option value="SingleChoice">単一選択</option>
+                                        <option value="MultipleChoice">複数選択</option>
+                                    </InputSelect>
+                                </div>
+                                <div class="form-field">
+                                    <label for="@($"field-max-{field.InternalId}")">最大文字数（任意）</label>
+                                    <InputNumber id="@($"field-max-{field.InternalId}")" @bind-Value="field.MaximumLength" min="1" max="20000" />
+                                </div>
+                            </div>
+                            <div class="checkbox-field">
+                                <InputCheckbox id="@($"field-required-{field.InternalId}")" @bind-Value="field.IsRequired" />
+                                <label for="@($"field-required-{field.InternalId}")">必須項目</label>
+                            </div>
+                            @if (field.Kind is "SingleChoice" or "MultipleChoice")
+                            {
+                                <div class="form-field">
+                                    <label for="@($"field-options-{field.InternalId}")">選択肢（1 行に 1 つ）</label>
+                                    <InputTextArea id="@($"field-options-{field.InternalId}")" @bind-Value="field.OptionsText" rows="3" />
+                                </div>
+                            }
+                        </div>
+                    }
+                    <button type="button" class="secondary-button" @onclick="AddField">項目を追加</button>
+                </fieldset>
+
+                <div class="form-actions">
+                    <button type="button" class="secondary-button" @onclick="CancelEdit">キャンセル</button>
+                    <button class="primary-button" type="submit" disabled="@_isSaving">
+                        @(_isSaving ? "保存中…" : _selectedType is null ? "募集種別を作成" : "新しいフォーム版を保存")
+                    </button>
+                </div>
+            </EditForm>
+        </section>
+    }
+</section>
+
+@code {
+    [Parameter]
+    public string ConferenceId { get; set; } = string.Empty;
+
+    private List<ManagedProposalTypeDto> _proposalTypes = [];
+    private ProposalTypeForm _form = new();
+    private ManagedProposalTypeDto? _selectedType;
+    private string? _selectedEtag;
+    private string? _loadError;
+    private string? _saveError;
+    private string? _statusMessage;
+    private bool _isLoading = true;
+    private bool _isSaving;
+    private bool _isEditing;
+
+    protected override Task OnParametersSetAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _isLoading = true;
+        _loadError = null;
+        try
+        {
+            var result = await Api.GetManagedProposalTypesAsync(ConferenceId);
+            _proposalTypes = result.ProposalTypes;
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (CfpApiException exception)
+        {
+            _loadError = exception.UserMessage;
+        }
+        catch (HttpRequestException)
+        {
+            _loadError = "通信に失敗しました。接続を確認して、もう一度お試しください。";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private void BeginCreate()
+    {
+        _selectedType = null;
+        _selectedEtag = null;
+        _form = new ProposalTypeForm();
+        _saveError = null;
+        _statusMessage = null;
+        _isEditing = true;
+    }
+
+    private void BeginEdit(ManagedProposalTypeDto proposalType)
+    {
+        _selectedType = proposalType;
+        _selectedEtag = proposalType.ETag;
+        _form = new ProposalTypeForm
+        {
+            Name = proposalType.Name,
+            Description = proposalType.Description,
+            DurationMinutes = proposalType.DurationMinutes,
+            IsAcceptingSubmissions = proposalType.IsAcceptingSubmissions,
+            IsPublic = proposalType.IsPublic,
+            Fields = proposalType.Fields.Select(field => new FormFieldEditor
+            {
+                Id = field.Id,
+                Label = field.Label,
+                Kind = field.Kind,
+                IsRequired = field.IsRequired,
+                MaximumLength = field.MaximumLength,
+                OptionsText = field.Options is null ? string.Empty : string.Join(Environment.NewLine, field.Options)
+            }).ToList()
+        };
+        _saveError = null;
+        _statusMessage = null;
+        _isEditing = true;
+    }
+
+    private void AddField() =>
+        _form.Fields.Add(new FormFieldEditor { Id = $"field-{Guid.NewGuid():N}"[..14], Label = "新しい項目" });
+
+    private void RemoveField(FormFieldEditor field) => _form.Fields.Remove(field);
+
+    private void CancelEdit()
+    {
+        _isEditing = false;
+        _selectedType = null;
+        _selectedEtag = null;
+        _saveError = null;
+    }
+
+    private async Task SaveAsync()
+    {
+        _saveError = null;
+        _statusMessage = null;
+        _isSaving = true;
+        try
+        {
+            var payload = new SaveProposalTypeRequestDto
+            {
+                ProposalTypeId = _selectedType?.Id,
+                Name = _form.Name.Trim(),
+                Description = _form.Description.Trim(),
+                DurationMinutes = _form.DurationMinutes,
+                IsAcceptingSubmissions = _form.IsAcceptingSubmissions,
+                IsPublic = _form.IsPublic,
+                Fields = _form.Fields.Select(field => new ProposalFormFieldDto
+                {
+                    Id = field.Id.Trim(),
+                    Label = field.Label.Trim(),
+                    Kind = field.Kind,
+                    IsRequired = field.IsRequired,
+                    MaximumLength = field.MaximumLength,
+                    Options = string.IsNullOrWhiteSpace(field.OptionsText)
+                        ? null
+                        : field.OptionsText.Split(
+                            ['\r', '\n'],
+                            StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToList()
+                }).ToList()
+            };
+            var saved = await Api.SaveProposalTypeAsync(ConferenceId, payload, _selectedEtag);
+            _statusMessage = $"「{saved.Name}」のフォーム v{saved.FormVersion} を保存しました。提出済み応募のフォーム版は変更されません。";
+            _isEditing = false;
+            _selectedType = null;
+            _selectedEtag = null;
+            await LoadAsync();
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (CfpApiException exception)
+        {
+            _saveError = exception.UserMessage;
+        }
+        catch (HttpRequestException)
+        {
+            _saveError = "通信に失敗しました。保存結果が不明な場合は一覧を再読み込みしてください。";
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    private sealed class ProposalTypeForm
+    {
+        [Required]
+        [StringLength(120)]
+        public string Name { get; set; } = string.Empty;
+
+        [StringLength(10_000)]
+        public string Description { get; set; } = string.Empty;
+
+        [Range(1, 480)]
+        public int DurationMinutes { get; set; } = 30;
+
+        public bool IsAcceptingSubmissions { get; set; } = true;
+        public bool IsPublic { get; set; } = true;
+        public List<FormFieldEditor> Fields { get; set; } =
+        [
+            new() { Id = "title", Label = "タイトル", Kind = "ShortText", IsRequired = true, MaximumLength = 200 },
+            new() { Id = "abstract", Label = "概要", Kind = "LongText", IsRequired = true, MaximumLength = 4000 }
+        ];
+    }
+
+    private sealed class FormFieldEditor
+    {
+        public string InternalId { get; } = Guid.NewGuid().ToString("N");
+        public string Id { get; set; } = string.Empty;
+        public string Label { get; set; } = string.Empty;
+        public string Kind { get; set; } = "ShortText";
+        public bool IsRequired { get; set; }
+        public int? MaximumLength { get; set; }
+        public string OptionsText { get; set; } = string.Empty;
+    }
+}

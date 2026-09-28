@@ -89,8 +89,8 @@
 | `track` | `track:{trackId}` | トラック名、色等の表示設定、表示順 |
 | `scheduleSlot` | `slot:{slotId}` | `proposalId`（MVP の stable `sessionId`）、room/track ID、開始・終了 UTC、枠種別、公開状態 |
 | `scheduleRevision` | `schedule-revision` | 会議内の日程更新 revision。`_etag` による競合検出に使う |
-| `emailCampaign` | `emailCampaign:{campaignId}` | 対象条件の確定 snapshot、本文・template version、作成者、確認状態、fan-out progress |
-| `emailOutbox` | `outbox:{eventId}:{recipientId}` | recipient user ID、`Transactional / ConferenceOperations`、通知内容／template version、`Pending / Ready / Sending / Accepted / Delivered / Bounced / Suppressed / FilteredSpam / Quarantined / Failed / Unknown / Cancelled`、provider message ID、attempt ID・send lease、再試行情報、作成日時 |
+| `emailCampaign` | `emailCampaign:{campaignId}` | 対象 proposal status と recipient user ID の固定 snapshot、送信者アドレス、件名・プレーンテキスト本文、対象外人数、作成者、request hash、preview 有効期限、確認 operation ID／理由 |
+| `emailOutbox` | `outbox:{eventId}:{recipientId}` | recipient user ID、`Transactional / ConferenceOperations`、campaign 送信者 snapshot、通知内容／template version、`Pending / Ready / Sending / Accepted / Delivered / Bounced / Suppressed / FilteredSpam / Quarantined / Failed / Unknown / Cancelled`、provider message ID、attempt ID・send lease、再試行情報、作成日時 |
 | `auditEvent` | `audit:{eventId}` | actor、操作、対象 ID、日時、必要最小限の変更要約 |
 
 会議状態は一つの `status` にまとめない。公開の可否は会議の `visibility`、募集の可否は `cfp`、審査進行は `reviewCycle`、公開日程は `schedulePublication` でそれぞれ判定する。CFP の表示状態 `Scheduled / Open / Closed` は `cfp` の保存状態と UTC の開始・締切から導出し、締切の経過だけで保存データを暗黙更新しない。手動停止・再開は actor と理由を監査記録に残す。
@@ -128,9 +128,15 @@ Cosmos DB のアイテム間に relational foreign key はない。次の参照�
   "conferenceId": "conf_01J...",
   "state": "active",
   "title": "Example Conference",
-  "startsAtUtc": "2026-11-01T00:00:00Z"
+  "startsAtUtc": "2026-11-01T00:00:00Z",
+  "timeZoneId": "Asia/Tokyo",
+  "cfpState": "Published",
+  "cfpOpensAtUtc": "2026-08-01T00:00:00Z",
+  "cfpClosesAtUtc": "2026-10-01T00:00:00Z"
 }
 ```
+
+`state: "active"` は会議が `Active` かつ `Public` であることを確認した後にのみ設定する。公開カタログではこの状態を公開 gate とし、画面表示に必要な開催日時・タイムゾーン・募集期間だけを directory projection に保持する。非公開化・アーカイブ時は先に `state` を無効化する。
 
 会議作成・公開状態の変更は `conferenceData` と `conferenceDirectory` をまたぐため単一トランザクションにはならない。会議の公開情報を保存した後に directory entry を active にする。非公開化・アーカイブ時は先に directory entry を無効化して公開から除き、その後に正本の状態を更新する。各段階は同じ operation ID で再実行できるようにする。
 
@@ -194,14 +200,14 @@ identity mapping（`identityDirectory`）は `identityKey` をパーティショ
 - 応募 ID と `auditEvent` / `emailOutbox` ID は操作 ID から決定的に作成できるようにし、transactional batch 再試行で二重作成しない。
 - Functions Queue/Change Feed は再配信されるため、outbox ID を処理キーにする。ただし外部メール送信が成功した直後に worker が停止する可能性があるため、メールの exactly-once 配信は保証しない。運営画面では `Accepted` と実配信確認を区別する。
 - Queue message には `{ conferenceId, outboxId }` のみを含める。outbox がある `conferenceData` の point read には partition key の `conferenceId` が必要であり、メールアドレス・本文などの PII は載せない。
-- 一括 campaign の宛先はプレビュー後に確定し、recipient ごとの `emailOutbox` を bounded batch で段階作成する。campaign が `Ready` になる前は送信しない。途中失敗は campaign ID と recipient ID の deterministic outbox ID で再開し、重複宛先や二重送信を防ぐ。
+- 一括 campaign はプレビュー時に応募状態、recipient user ID、設定済み送信者アドレスを固定し、最大50人までとする。送信確認では preview ETag と operation ID を検証し、campaign の `Previewed → Ready`、recipient ごとの `Ready` な `emailOutbox`（deterministic `outbox:{campaignId}:{recipientId}` ID）、監査イベントを同一 `conferenceData` transactional batch に含める。campaign ID は preview operation ID から導出する。同一 operation の再試行は既存 campaign を返し、異なる内容の再利用や古い ETag は拒否する。上限内では全件が atomic に commit されるため部分 fan-out は発生しない。50人を超える配信を導入する場合は、段階 fan-out と進捗復旧を別途設計する。
 - Event Grid delivery report は provider message ID lookup から outbox を特定する。Event Grid event ID を event journal に記録し、outbox 更新完了後に `Applied` とする。duplicate delivery や途中停止は `Received` の再実行で同じ最終状態に収束させる。ACS 受付後に結果が不明な場合は自動で再送せず `Unknown` として照合作業に回す。
 
 ### 6.3 状態遷移
 
 応募状態は `Draft → Submitted → UnderReview → Accepted/Rejected` を基本とし、締切前の取り下げは `Withdrawn` とする。許可する遷移は API service で検証し、現在状態だけでなく CFP state と deadline も同時に確認する。公開状態の変更は別の publication state として管理し、状態を変更した時は `auditEvent` を同一 batch で追加する。
 
-メール状態は dispatch と provider delivery の進行を一つの状態列で表す。`Pending → Ready → Sending → Accepted → Delivered / Bounced / Suppressed / FilteredSpam / Quarantined` が基本である。campaign fan-out 中の outbox は `Pending`、送信対象の確定後に `Ready` とする。Change Feed は `type == emailOutbox && status == Ready` の item だけを Queue に発行する。送信前の一時障害は ACS 未受付を確認できる場合に限り backoff 後 `Ready` へ戻し、確定的な失敗は `Failed`、ACS が受け付けた可能性を否定できない障害は `Unknown` とする。送信 worker は ETag 条件付きで `Ready → Sending` を取得し、attempt ID と lease 時刻を保存してから ACS を呼ぶ。期限切れの `Sending` は安全側に倒して `Unknown` とし、自動再送しない。`Unknown` は運営者が provider 状態を照合し、理由を記録した場合だけ明示的に再送できる。送信開始前のみ `Cancelled` にできる。`Suppressed` には opt-out、既知 hard bounce 等の理由を別フィールドで記録する。`Transactional` は受付・採否等の運用上必須の連絡に限り、`ConferenceOperations` は既定 opt-out とし、送信時にも最新の同意・suppression を再確認する。
+メール状態は dispatch と provider delivery の進行を一つの状態列で表す。`Pending → Ready → Sending → Accepted → Delivered / Bounced / Suppressed / FilteredSpam / Quarantined` が基本である。現行 campaign は最大50人のため、送信確認 transaction で全 recipient outbox を直接 `Ready` とし、部分 fan-out の `Pending` item は作らない。Change Feed は `type == emailOutbox && status == Ready` の item だけを Queue に発行する。送信前の一時障害は ACS 未受付を確認できる場合に限り backoff 後 `Ready` へ戻し、確定的な失敗は `Failed`、ACS が受け付けた可能性を否定できない障害は `Unknown` とする。送信 worker は ETag 条件付きで `Ready → Sending` を取得し、attempt ID と lease 時刻を保存してから ACS を呼ぶ。期限切れの `Sending` は安全側に倒して `Unknown` とし、自動再送しない。`Unknown` は運営者が provider 状態を照合し、理由を記録した場合だけ明示的に再送できる。送信開始前のみ `Cancelled` にできる。`Suppressed` には opt-out、既知 hard bounce 等の理由を別フィールドで記録する。`Transactional` は受付・採否等の運用上必須の連絡に限り、`ConferenceOperations` は既定 opt-out とし、送信時にも最新の同意・suppression を再確認する。
 
 `Accepted` は terminal state ではない。worker の受付結果更新と Event Grid の配信結果更新は競合するため、いずれも ETag 条件付きで処理し、`Delivered / Bounced / Suppressed / FilteredSpam / Quarantined / Failed` などの配信結果を `Accepted` で上書きしない。異なる terminal event が届いた場合は既存状態を維持して anomaly として記録・監視する。
 

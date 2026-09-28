@@ -1,0 +1,178 @@
+﻿@page "/account/profile"
+@attribute [Authorize]
+@inject CfpProtectedApiClient Api
+
+<PageTitle>プロフィール | カンファレンス CFP</PageTitle>
+
+<p class="breadcrumb"><a href="/my/proposals">自分の応募</a><span aria-hidden="true">/</span><span>プロフィール</span></p>
+
+@if (_isLoading)
+{
+    <p class="state-message" role="status" aria-live="polite">プロフィールを読み込んでいます…</p>
+}
+else if (_profile is null)
+{
+    <div class="error-panel" role="alert">
+        <div><h1>プロフィールを表示できません</h1><p>@_errorMessage</p></div>
+        <button class="secondary-button" @onclick="LoadAsync">再試行</button>
+    </div>
+}
+else
+{
+    <section class="form-page" aria-labelledby="profile-heading">
+        <p class="eyebrow">SPEAKER PROFILE</p>
+        <h1 id="profile-heading">プロフィール</h1>
+        <p class="field-help">内部ユーザー ID は応募の所有者を識別します。メールアドレスだけでアカウントを統合しません。</p>
+
+        <div class="form-field">
+            <span class="form-label">ユーザー ID</span>
+            <code class="user-id">@_profile.UserId</code>
+        </div>
+        <div class="form-field">
+            <span class="form-label">通知用メールアドレス</span>
+            @if (_profile.EmailVerified && !string.IsNullOrWhiteSpace(_profile.Email))
+            {
+                <p>@_profile.Email <span class="status-pill status-open">確認済み</span></p>
+                @if (_profile.EmailSuppressed)
+                {
+                    <p class="field-help">このアドレスへの配信は suppression により停止中です。別の確認済みアドレスを利用するには External ID 側の連絡先を更新してください。</p>
+                }
+            }
+            else
+            {
+                <p class="field-help">確認済みメールアドレスがありません。External ID が確認済みアドレスを提供しない場合、Transactional メールは送信されません。</p>
+            }
+        </div>
+
+        @if (_errorMessage is not null)
+        {
+            <div class="error-panel" role="alert"><p>@_errorMessage</p></div>
+        }
+        @if (_statusMessage is not null)
+        {
+            <p class="state-message" role="status" aria-live="polite">@_statusMessage</p>
+        }
+
+        <EditForm Model="_form" OnValidSubmit="SaveAsync" class="form-layout">
+            <DataAnnotationsValidator />
+            <ValidationSummary class="validation-summary" />
+            <div class="form-field">
+                <label for="profile-display-name">表示名 <span class="required-label">必須</span></label>
+                <InputText id="profile-display-name" @bind-Value="_form.DisplayName" maxlength="80" />
+                <ValidationMessage For="@(() => _form.DisplayName)" />
+            </div>
+            <div class="form-field">
+                <label for="profile-biography">自己紹介</label>
+                <InputTextArea id="profile-biography" @bind-Value="_form.Biography" maxlength="5000" rows="5" />
+                <ValidationMessage For="@(() => _form.Biography)" />
+            </div>
+            <div class="checkbox-field">
+                <InputCheckbox id="profile-operations-opt-in" @bind-Value="_form.ConferenceOperationsOptIn" />
+                <label for="profile-operations-opt-in">任意のカンファレンス運営連絡を受け取る</label>
+            </div>
+            <p class="field-help">受付・採否など必要な Transactional 通知と、任意の ConferenceOperations 連絡は別に扱われます。</p>
+            <div class="form-actions">
+                <button class="primary-button" type="submit" disabled="@_isSaving">
+                    @(_isSaving ? "保存中…" : "プロフィールを保存")
+                </button>
+            </div>
+        </EditForm>
+    </section>
+}
+
+@code {
+    private SpeakerProfileDto? _profile;
+    private readonly ProfileForm _form = new();
+    private string? _errorMessage;
+    private string? _statusMessage;
+    private bool _isLoading = true;
+    private bool _isSaving;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _isLoading = true;
+        _errorMessage = null;
+        try
+        {
+            _profile = await Api.GetSpeakerProfileAsync();
+            _form.DisplayName = _profile.DisplayName;
+            _form.Biography = _profile.Biography;
+            _form.ConferenceOperationsOptIn = _profile.ConferenceOperationsOptIn;
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (CfpApiException exception)
+        {
+            _errorMessage = exception.UserMessage;
+        }
+        catch (HttpRequestException)
+        {
+            _errorMessage = "通信に失敗しました。接続を確認して、もう一度お試しください。";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_profile is null)
+        {
+            return;
+        }
+
+        _isSaving = true;
+        _errorMessage = null;
+        _statusMessage = null;
+        try
+        {
+            _profile = await Api.UpdateSpeakerProfileAsync(
+                new UpdateSpeakerProfileRequestDto
+                {
+                    DisplayName = _form.DisplayName.Trim(),
+                    Biography = _form.Biography.Trim(),
+                    ConferenceOperationsOptIn = _form.ConferenceOperationsOptIn
+                },
+                _profile.ETag);
+            _statusMessage = "プロフィールを保存しました。";
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (CfpApiException exception)
+        {
+            _errorMessage = exception.UserMessage;
+            if (exception.StatusCode == HttpStatusCode.PreconditionFailed)
+            {
+                await LoadAsync();
+                _errorMessage = exception.UserMessage;
+            }
+        }
+        catch (HttpRequestException)
+        {
+            _errorMessage = "通信に失敗しました。保存結果が不明な場合は再読み込みしてください。";
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    private sealed class ProfileForm
+    {
+        [Required]
+        [StringLength(80)]
+        public string DisplayName { get; set; } = string.Empty;
+
+        [StringLength(5000)]
+        public string Biography { get; set; } = string.Empty;
+
+        public bool ConferenceOperationsOptIn { get; set; }
+    }
+}

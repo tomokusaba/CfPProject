@@ -1,0 +1,23 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Cfp.Application\Cfp.Application.csproj" />
+    <ProjectReference Include="..\..\src\Cfp.Contracts\Cfp.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\Cfp.Domain\Cfp.Domain.csproj" />
+    <ProjectReference Include="..\..\src\Cfp.Functions\Cfp.Functions.csproj" />
+    <ProjectReference Include="..\..\src\Cfp.Web\Cfp.Web.csproj" />
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+</Project>

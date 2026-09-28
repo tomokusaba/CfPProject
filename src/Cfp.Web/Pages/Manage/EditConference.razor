@@ -1,0 +1,304 @@
+﻿@page "/manage/conferences/{ConferenceId}/edit"
+@attribute [Authorize]
+@inject CfpProtectedApiClient Api
+
+<PageTitle>カンファレンス情報を編集 | カンファレンス CFP</PageTitle>
+
+<p class="breadcrumb">
+    <a href="@($"/manage/conferences/{Uri.EscapeDataString(ConferenceId)}")">運営ダッシュボード</a>
+    <span aria-hidden="true">/</span>
+    <span>基本情報を編集</span>
+</p>
+
+@if (_isLoading)
+{
+    <p class="state-message" role="status" aria-live="polite">カンファレンス情報を読み込んでいます…</p>
+}
+else if (_conference is null)
+{
+    <div class="error-panel" role="alert"><h1>カンファレンスを表示できません</h1><p>@_errorMessage</p></div>
+}
+else
+{
+    <section class="form-page" aria-labelledby="edit-conference-heading">
+        <p class="eyebrow">CONFERENCE DETAILS</p>
+        <h1 id="edit-conference-heading">基本情報を編集</h1>
+        <p class="form-intro">slug は公開 URL の安定性を保つため変更できません。開催時刻は現在のカンファレンスタイムゾーンで入力します。</p>
+
+        @if (_errorMessage is not null)
+        {
+            <div class="error-panel" role="alert"><p>@_errorMessage</p></div>
+        }
+        @if (_statusMessage is not null)
+        {
+            <p class="state-message" role="status" aria-live="polite">@_statusMessage</p>
+        }
+
+        <EditForm Model="_form" OnValidSubmit="SaveAsync" class="form-layout">
+            <DataAnnotationsValidator />
+            <ValidationSummary class="validation-summary" />
+            <div class="form-field">
+                <label for="edit-title">カンファレンス名 <span class="required-label">必須</span></label>
+                <InputText id="edit-title" @bind-Value="_form.Title" maxlength="200" />
+                <ValidationMessage For="@(() => _form.Title)" />
+            </div>
+            <div class="form-field">
+                <label for="edit-description">概要</label>
+                <InputTextArea id="edit-description" @bind-Value="_form.Description" maxlength="10000" rows="5" />
+            </div>
+            <div class="form-field">
+                <label for="edit-time-zone">タイムゾーン</label>
+                <input id="edit-time-zone" value="@_conference.TimeZoneId" readonly />
+                <p class="field-help">開催時刻の解釈を変えるため、タイムゾーンの変更はこの画面では行えません。</p>
+            </div>
+            <fieldset class="form-field">
+                <legend>開催日時（@_conference.TimeZoneId）</legend>
+                <div class="date-grid">
+                    <div><label class="sub-label" for="edit-start">開始</label><InputText id="edit-start" type="datetime-local" @bind-Value="_form.StartsAtLocal" /></div>
+                    <div><label class="sub-label" for="edit-end">終了</label><InputText id="edit-end" type="datetime-local" @bind-Value="_form.EndsAtLocal" /></div>
+                </div>
+            </fieldset>
+            <fieldset class="form-field">
+                <legend>募集期間（@_conference.TimeZoneId）</legend>
+                <div class="date-grid">
+                    <div><label class="sub-label" for="edit-cfp-open">開始</label><InputText id="edit-cfp-open" type="datetime-local" @bind-Value="_form.CfpOpensAtLocal" /></div>
+                    <div><label class="sub-label" for="edit-cfp-close">締切</label><InputText id="edit-cfp-close" type="datetime-local" @bind-Value="_form.CfpClosesAtLocal" /></div>
+                </div>
+            </fieldset>
+            <div class="form-actions">
+                <a class="secondary-button" href="@($"/manage/conferences/{Uri.EscapeDataString(ConferenceId)}")">キャンセル</a>
+                <button class="primary-button" type="submit" disabled="@_isSaving">@(_isSaving ? "保存中…" : "変更を保存")</button>
+            </div>
+        </EditForm>
+
+        @if (_conference.Role == "ConferenceOwner" && _conference.LifecycleState != "Archived")
+        {
+            <section class="archive-panel" aria-labelledby="archive-heading">
+                <h2 id="archive-heading">カンファレンスをアーカイブ</h2>
+                <p>アーカイブすると非公開になり、募集は停止します。この操作は公開 API から即時に反映されます。</p>
+                <div class="form-field">
+                    <label for="archive-reason">アーカイブ理由 <span class="required-label">必須</span></label>
+                    <InputTextArea id="archive-reason" @bind-Value="_archiveReason" maxlength="500" rows="2" />
+                </div>
+                <div class="form-field">
+                    <label for="archive-confirm">確認のため ARCHIVE と入力</label>
+                    <InputText id="archive-confirm" @bind-Value="_archiveConfirmation" autocomplete="off" />
+                </div>
+                <button class="danger-button" @onclick="ArchiveAsync" disabled="@(_isSaving || _archiveConfirmation != "ARCHIVE")">
+                    アーカイブ
+                </button>
+            </section>
+        }
+    </section>
+}
+
+@code {
+    [Parameter]
+    public string ConferenceId { get; set; } = string.Empty;
+
+    private ManagedConferenceDto? _conference;
+    private readonly ConferenceEditForm _form = new();
+    private string _archiveReason = string.Empty;
+    private string _archiveConfirmation = string.Empty;
+    private string? _errorMessage;
+    private string? _statusMessage;
+    private bool _isLoading = true;
+    private bool _isSaving;
+
+    protected override Task OnParametersSetAsync() => LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        _isLoading = true;
+        _errorMessage = null;
+        try
+        {
+            _conference = await Api.GetManagedConferenceAsync(ConferenceId);
+            _form.Title = _conference.Title;
+            _form.Description = _conference.Description;
+            _form.StartsAtLocal = ToLocalInput(_conference.StartsAtUtc, _conference.TimeZoneId);
+            _form.EndsAtLocal = ToLocalInput(_conference.EndsAtUtc, _conference.TimeZoneId);
+            _form.CfpOpensAtLocal = ToLocalInput(_conference.CfpOpensAtUtc, _conference.TimeZoneId);
+            _form.CfpClosesAtLocal = ToLocalInput(_conference.CfpClosesAtUtc, _conference.TimeZoneId);
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (CfpApiException exception)
+        {
+            _errorMessage = exception.UserMessage;
+        }
+        catch (HttpRequestException)
+        {
+            _errorMessage = "通信に失敗しました。接続を確認して、もう一度お試しください。";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        if (_conference is null)
+        {
+            return;
+        }
+
+        _isSaving = true;
+        _errorMessage = null;
+        _statusMessage = null;
+        try
+        {
+            var zone = TimeZoneInfo.FindSystemTimeZoneById(_conference.TimeZoneId);
+            _conference = await Api.UpdateConferenceAsync(
+                ConferenceId,
+                new UpdateConferenceRequestDto
+                {
+                    Title = _form.Title.Trim(),
+                    Description = _form.Description.Trim(),
+                    TimeZoneId = _conference.TimeZoneId,
+                    StartsAtUtc = ConvertLocal(_form.StartsAtLocal, zone),
+                    EndsAtUtc = ConvertLocal(_form.EndsAtLocal, zone),
+                    CfpOpensAtUtc = ConvertLocal(_form.CfpOpensAtLocal, zone),
+                    CfpClosesAtUtc = ConvertLocal(_form.CfpClosesAtLocal, zone)
+                },
+                _conference.ETag);
+            _statusMessage = "カンファレンス情報を保存しました。";
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (CfpApiException exception)
+        {
+            _errorMessage = exception.UserMessage;
+            if (exception.StatusCode == HttpStatusCode.PreconditionFailed)
+            {
+                await LoadAsync();
+                _errorMessage = exception.UserMessage;
+            }
+        }
+        catch (FormatException)
+        {
+            _errorMessage = "日時を入力してください。";
+        }
+        catch (ArgumentException)
+        {
+            _errorMessage = "タイムゾーンの存在しない時刻または重複時刻は使用できません。";
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            _errorMessage = "タイムゾーンが見つかりません。";
+        }
+        catch (HttpRequestException)
+        {
+            _errorMessage = "通信に失敗しました。保存結果が不明な場合は再読み込みしてください。";
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    private async Task ArchiveAsync()
+    {
+        if (_conference is null || string.IsNullOrWhiteSpace(_archiveReason))
+        {
+            _errorMessage = "アーカイブ理由を入力してください。";
+            return;
+        }
+
+        _isSaving = true;
+        _errorMessage = null;
+        _statusMessage = null;
+        try
+        {
+            _conference = await Api.ArchiveConferenceAsync(
+                ConferenceId,
+                _archiveReason.Trim(),
+                _conference.ETag);
+            _statusMessage = "カンファレンスをアーカイブしました。";
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (CfpApiException exception)
+        {
+            _errorMessage = exception.UserMessage;
+        }
+        catch (HttpRequestException)
+        {
+            _errorMessage = "通信に失敗しました。アーカイブ状態を再読み込みしてください。";
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+
+    private static string ConvertLocal(string value, TimeZoneInfo zone)
+    {
+        if (!DateTime.TryParseExact(
+                value,
+                "yyyy-MM-ddTHH:mm",
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.None,
+                out var local))
+        {
+            throw new FormatException();
+        }
+
+        local = DateTime.SpecifyKind(local, DateTimeKind.Unspecified);
+        if (zone.IsInvalidTime(local) || zone.IsAmbiguousTime(local))
+        {
+            throw new ArgumentException("Ambiguous or invalid local time.");
+        }
+
+        return new DateTimeOffset(local, zone.GetUtcOffset(local))
+            .ToUniversalTime()
+            .ToString("O", CultureInfo.InvariantCulture);
+    }
+
+    private static string ToLocalInput(string value, string timeZoneId)
+    {
+        if (!DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var instant))
+        {
+            return string.Empty;
+        }
+
+        try
+        {
+            return TimeZoneInfo.ConvertTime(instant, TimeZoneInfo.FindSystemTimeZoneById(timeZoneId))
+                .ToString("yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture);
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            return string.Empty;
+        }
+    }
+
+    private sealed class ConferenceEditForm
+    {
+        [Required]
+        [StringLength(200)]
+        public string Title { get; set; } = string.Empty;
+
+        [StringLength(10_000)]
+        public string Description { get; set; } = string.Empty;
+
+        [Required]
+        public string StartsAtLocal { get; set; } = string.Empty;
+
+        [Required]
+        public string EndsAtLocal { get; set; } = string.Empty;
+
+        [Required]
+        public string CfpOpensAtLocal { get; set; } = string.Empty;
+
+        [Required]
+        public string CfpClosesAtLocal { get; set; } = string.Empty;
+    }
+}

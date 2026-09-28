@@ -1,0 +1,125 @@
+﻿@page "/manage/conferences/{ConferenceId}/audit"
+@attribute [Authorize]
+@inject CfpProtectedApiClient Api
+
+<PageTitle>操作履歴 | カンファレンス CFP</PageTitle>
+
+<p class="breadcrumb">
+    <a href="@($"/manage/conferences/{Uri.EscapeDataString(ConferenceId)}")">運営ダッシュボード</a>
+    <span aria-hidden="true">/</span>
+    <span>操作履歴</span>
+</p>
+
+<section class="management-page" aria-labelledby="audit-heading">
+    <p class="eyebrow">AUDIT LOG</p>
+    <h1 id="audit-heading">操作履歴</h1>
+    <p class="form-intro">応募本文やメールアドレスは記録せず、操作者と状態変更の要約を表示します。</p>
+
+    @if (_isLoading)
+    {
+        <p class="state-message" role="status" aria-live="polite">操作履歴を読み込んでいます…</p>
+    }
+    else if (_errorMessage is not null)
+    {
+        <div class="error-panel" role="alert">
+            <div><h2>操作履歴を表示できません</h2><p>@_errorMessage</p></div>
+            <button class="secondary-button" @onclick="RetryAsync">再試行</button>
+        </div>
+    }
+    else if (_events.Count == 0)
+    {
+        <div class="empty-panel">
+            <span class="empty-icon" aria-hidden="true">○</span>
+            <h2>操作履歴はありません</h2>
+        </div>
+    }
+    else
+    {
+        <div class="table-scroll">
+            <table class="data-table">
+                <caption>カンファレンスの操作履歴。ユーザー ID は内部識別子です。</caption>
+                <thead>
+                    <tr>
+                        <th scope="col">日時</th>
+                        <th scope="col">操作</th>
+                        <th scope="col">対象 ID</th>
+                        <th scope="col">操作者 ID</th>
+                        <th scope="col">概要</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var auditEvent in _events)
+                    {
+                        <tr>
+                            <td><time datetime="@auditEvent.OccurredAtUtc">@FormatDate(auditEvent.OccurredAtUtc)</time></td>
+                            <td>@auditEvent.Operation</td>
+                            <td><code>@auditEvent.TargetId</code></td>
+                            <td><code>@auditEvent.ActorUserId</code></td>
+                            <td>@auditEvent.Summary</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+        @if (!string.IsNullOrEmpty(_continuationToken))
+        {
+            <div class="load-more">
+                <button class="secondary-button" @onclick="LoadMoreAsync" disabled="@_isLoading">さらに表示</button>
+            </div>
+        }
+    }
+</section>
+
+@code {
+    [Parameter]
+    public string ConferenceId { get; set; } = string.Empty;
+
+    private readonly List<AuditEventDto> _events = [];
+    private string? _continuationToken;
+    private string? _errorMessage;
+    private bool _isLoading = true;
+
+    protected override Task OnParametersSetAsync() => LoadAsync();
+    private Task RetryAsync() => LoadAsync();
+    private Task LoadMoreAsync() => LoadAsync(append: true);
+
+    private async Task LoadAsync(bool append = false)
+    {
+        _isLoading = true;
+        _errorMessage = null;
+        try
+        {
+            var result = await Api.GetAuditEventsAsync(
+                ConferenceId,
+                continuationToken: append ? _continuationToken : null);
+            if (!append)
+            {
+                _events.Clear();
+            }
+
+            _events.AddRange(result.Events);
+            _continuationToken = result.ContinuationToken;
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (CfpApiException exception)
+        {
+            _errorMessage = exception.UserMessage;
+        }
+        catch (HttpRequestException)
+        {
+            _errorMessage = "通信に失敗しました。接続を確認して、もう一度お試しください。";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private static string FormatDate(string value) =>
+        DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var instant)
+            ? instant.ToLocalTime().ToString("yyyy年M月d日 H:mm", CultureInfo.GetCultureInfo("ja-JP"))
+            : value;
+}

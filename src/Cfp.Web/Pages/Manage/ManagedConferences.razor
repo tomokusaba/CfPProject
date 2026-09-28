@@ -1,0 +1,169 @@
+﻿@page "/manage/conferences"
+@attribute [Authorize]
+@inject CfpProtectedApiClient Api
+
+<PageTitle>運営カンファレンス | カンファレンス CFP</PageTitle>
+
+<section class="management-page" aria-labelledby="managed-conferences-heading">
+    <p class="eyebrow">ORGANIZER WORKSPACE</p>
+    <div class="section-heading">
+        <div>
+            <h1 id="managed-conferences-heading">運営カンファレンス</h1>
+            <p class="form-intro">主催・運営に参加しているカンファレンスを管理します。</p>
+        </div>
+        <a class="primary-button" href="/manage/conferences/new">カンファレンスを作成</a>
+    </div>
+
+    @if (_isLoading)
+    {
+        <p class="state-message" role="status" aria-live="polite">運営カンファレンスを読み込んでいます…</p>
+    }
+    else if (_errorMessage is not null)
+    {
+        <div class="error-panel" role="alert">
+            <div><h2>一覧を読み込めません</h2><p>@_errorMessage</p></div>
+            <button class="secondary-button" @onclick="RetryAsync">再試行</button>
+        </div>
+    }
+    else if (_conferences.Count == 0)
+    {
+        <div class="empty-panel">
+            <span class="empty-icon" aria-hidden="true">○</span>
+            <h2>管理対象のカンファレンスはありません</h2>
+            <p>新しいカンファレンスを作成するか、Owner にメンバー登録を依頼してください。</p>
+            <a class="primary-button" href="/manage/conferences/new">作成する</a>
+        </div>
+    }
+    else
+    {
+        <div class="conference-grid">
+            @foreach (var conference in _conferences)
+            {
+                <article class="conference-card">
+                    <div class="card-topline">
+                        <span class="@GetStatusClass(conference.Visibility, conference.LifecycleState)">
+                            @GetStatusText(conference.Visibility, conference.LifecycleState)
+                        </span>
+                        <span class="status-pill @GetCfpClass(conference.CfpAvailability)">
+                            @GetCfpText(conference.CfpAvailability)
+                        </span>
+                    </div>
+                    <h2><a href="@($"/manage/conferences/{Uri.EscapeDataString(conference.Id)}")">@conference.Title</a></h2>
+                    <p class="card-date">@FormatDate(conference.StartsAtUtc, conference.TimeZoneId)</p>
+                    <p class="field-help">役割: @GetRoleText(conference.Role) ・ slug: @conference.Slug</p>
+                    <a class="card-link" href="@($"/manage/conferences/{Uri.EscapeDataString(conference.Id)}")">
+                        運営ダッシュボード <span aria-hidden="true">→</span>
+                    </a>
+                </article>
+            }
+        </div>
+        @if (!string.IsNullOrEmpty(_continuationToken))
+        {
+            <div class="load-more">
+                <button class="secondary-button" @onclick="LoadMoreAsync" disabled="@_isLoading">
+                    @(_isLoading ? "読み込み中…" : "さらに表示")
+                </button>
+            </div>
+        }
+    }
+</section>
+
+@code {
+    private readonly List<ManagedConferenceSummaryDto> _conferences = [];
+    private string? _continuationToken;
+    private string? _errorMessage;
+    private bool _isLoading = true;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private Task RetryAsync() => LoadAsync();
+    private Task LoadMoreAsync() => LoadAsync(append: true);
+
+    private async Task LoadAsync(bool append = false)
+    {
+        _isLoading = true;
+        _errorMessage = null;
+        try
+        {
+            var result = await Api.ListManagedConferencesAsync(
+                continuationToken: append ? _continuationToken : null);
+            if (!append)
+            {
+                _conferences.Clear();
+            }
+
+            _conferences.AddRange(result.Conferences);
+            _continuationToken = result.ContinuationToken;
+        }
+        catch (AccessTokenNotAvailableException exception)
+        {
+            exception.Redirect();
+        }
+        catch (CfpApiException exception)
+        {
+            _errorMessage = exception.UserMessage;
+        }
+        catch (HttpRequestException)
+        {
+            _errorMessage = "通信に失敗しました。接続を確認して、もう一度お試しください。";
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private static string GetStatusText(string visibility, string lifecycle) =>
+        visibility == "Public" && lifecycle == "Active" ? "公開中" : "非公開";
+
+    private static string GetStatusClass(string visibility, string lifecycle) =>
+        visibility == "Public" && lifecycle == "Active"
+            ? "status-pill status-open"
+            : "status-pill status-closed";
+
+    private static string GetCfpText(string status) => status switch
+    {
+        "Open" => "募集中",
+        "Scheduled" => "募集開始前",
+        "Closed" => "募集終了",
+        _ => "未公開"
+    };
+
+    private static string GetCfpClass(string status) => status switch
+    {
+        "Open" => "status-open",
+        "Scheduled" => "status-scheduled",
+        "Closed" => "status-closed",
+        _ => "status-unpublished"
+    };
+
+    private static string GetRoleText(string role) => role switch
+    {
+        "ConferenceOwner" => "Owner",
+        "Organizer" => "Organizer",
+        "Reviewer" => "Reviewer",
+        _ => "Speaker"
+    };
+
+    private static string FormatDate(string startsAtUtc, string timeZoneId)
+    {
+        if (!DateTimeOffset.TryParse(
+                startsAtUtc,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.RoundtripKind,
+                out var instant))
+        {
+            return startsAtUtc;
+        }
+
+        try
+        {
+            return TimeZoneInfo.ConvertTime(instant, TimeZoneInfo.FindSystemTimeZoneById(timeZoneId))
+                .ToString("yyyy年M月d日", CultureInfo.GetCultureInfo("ja-JP"));
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            return instant.ToString("yyyy年M月d日", CultureInfo.GetCultureInfo("ja-JP"));
+        }
+    }
+}

@@ -1,0 +1,197 @@
+﻿@page "/"
+@inject CfpApiClient Api
+
+<PageTitle>カンファレンスを探す | カンファレンス CFP</PageTitle>
+
+<section class="hero">
+    <div class="hero-copy">
+        <p class="eyebrow">CALL FOR PROPOSALS</p>
+        <h1>次の登壇につながる<br />カンファレンスを見つけよう。</h1>
+        <p class="hero-description">
+            募集内容や開催情報を確認して、あなたのアイデアを届ける準備を始めましょう。
+        </p>
+        <a class="primary-button" href="#conference-list">募集を探す <span aria-hidden="true">↓</span></a>
+    </div>
+    <div class="hero-art" aria-hidden="true">
+        <div class="art-card art-card-back"></div>
+        <div class="art-card art-card-front">
+            <span class="art-kicker">YOUR NEXT TALK</span>
+            <span class="art-title">Ideas<br />in motion.</span>
+            <span class="art-line"></span>
+        </div>
+        <span class="art-spark art-spark-one">✳</span>
+        <span class="art-spark art-spark-two">✳</span>
+    </div>
+</section>
+
+<section id="conference-list" class="conference-section" aria-labelledby="conference-heading">
+    <div class="section-heading">
+        <div>
+            <p class="eyebrow">DISCOVER</p>
+            <h2 id="conference-heading">公開中のカンファレンス</h2>
+        </div>
+        @if (_conferences is { Count: > 0 })
+        {
+            <span class="result-count">@_conferences.Count 件を表示</span>
+        }
+    </div>
+
+    <form class="search-form" role="search" @onsubmit="SearchAsync" @onsubmit:preventDefault="true">
+        <label for="conference-search">カンファレンス名で検索</label>
+        <div class="search-controls">
+            <input id="conference-search" type="search" @bind="_searchTerm" maxlength="100"
+                   placeholder="例: 開催テーマやイベント名" />
+            <button class="primary-button" type="submit" disabled="@_isLoading">検索</button>
+        </div>
+    </form>
+
+    @if (_isLoading)
+    {
+        <p class="state-message" role="status" aria-live="polite">カンファレンスを読み込んでいます…</p>
+    }
+    else if (_errorMessage is not null)
+    {
+        <div class="error-panel" role="alert">
+            <div>
+                <h3>情報を読み込めませんでした</h3>
+                <p>@_errorMessage</p>
+            </div>
+            <button class="secondary-button" @onclick="RetryAsync">再試行</button>
+        </div>
+    }
+    else if (_conferences is { Count: 0 })
+    {
+        <div class="empty-panel">
+            <span class="empty-icon" aria-hidden="true">○</span>
+            <h3>現在、公開中のカンファレンスはありません</h3>
+            <p>募集が公開されると、ここに表示されます。</p>
+        </div>
+    }
+    else
+    {
+        <div class="conference-grid">
+            @foreach (var conference in _conferences ?? [])
+            {
+                <article class="conference-card">
+                    <div class="card-topline">
+                        <span class="@GetStatusClass(conference.CfpAvailability)">
+                            @GetStatusText(conference.CfpAvailability)
+                        </span>
+                        <span class="card-date">@FormatDate(conference.StartsAtUtc, conference.TimeZoneId)</span>
+                    </div>
+                    <h3><a href="@($"/c/{Uri.EscapeDataString(conference.Slug)}")">@conference.Title</a></h3>
+                    <p class="card-meta">@conference.TimeZoneId</p>
+                    <a class="card-link" href="@($"/c/{Uri.EscapeDataString(conference.Slug)}")">
+                        詳細を見る <span aria-hidden="true">↗</span>
+                    </a>
+                </article>
+            }
+        </div>
+        @if (!string.IsNullOrEmpty(_continuationToken))
+        {
+            <div class="load-more">
+                <button class="secondary-button" @onclick="LoadMoreAsync" disabled="@_isLoading">
+                    @(_isLoading ? "読み込み中…" : "さらに表示")
+                </button>
+            </div>
+        }
+    }
+</section>
+
+@code {
+    private readonly List<PublicConferenceSummaryDto> _conferences = [];
+    private string? _errorMessage;
+    private string? _continuationToken;
+    private string _searchTerm = string.Empty;
+    private bool _isLoading = true;
+
+    protected override Task OnInitializedAsync() => LoadConferencesAsync();
+
+    private Task RetryAsync() => LoadConferencesAsync();
+
+    private Task SearchAsync()
+    {
+        _continuationToken = null;
+        _conferences.Clear();
+        return LoadConferencesAsync();
+    }
+
+    private Task LoadMoreAsync() => LoadConferencesAsync(append: true);
+
+    private async Task LoadConferencesAsync(bool append = false)
+    {
+        _isLoading = true;
+        _errorMessage = null;
+        try
+        {
+            var page = await Api.ListPublicConferencesAsync(
+                continuationToken: append ? _continuationToken : null,
+                searchTerm: _searchTerm);
+            if (!append)
+            {
+                _conferences.Clear();
+            }
+
+            _conferences.AddRange(page.Conferences);
+            _continuationToken = page.ContinuationToken;
+        }
+        catch (CfpApiException exception)
+        {
+            _errorMessage = exception.UserMessage;
+        }
+        catch (HttpRequestException)
+        {
+            _errorMessage = "通信に失敗しました。接続を確認して、もう一度お試しください。";
+        }
+        catch (OperationCanceledException)
+        {
+            _errorMessage = "応答がタイムアウトしました。時間をおいて再度お試しください。";
+        }
+        catch (InvalidOperationException exception)
+        {
+            _errorMessage = exception.Message;
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private static string GetStatusClass(string status) => status switch
+    {
+        "Open" => "status-pill status-open",
+        "Scheduled" => "status-pill status-scheduled",
+        "Closed" => "status-pill status-closed",
+        _ => "status-pill status-unpublished"
+    };
+
+    private static string GetStatusText(string status) => status switch
+    {
+        "Open" => "募集中",
+        "Scheduled" => "募集開始前",
+        "Closed" => "募集終了",
+        _ => "募集情報なし"
+    };
+
+    private static string FormatDate(string startsAtUtc, string timeZoneId)
+    {
+        if (!DateTimeOffset.TryParse(
+                startsAtUtc,
+                CultureInfo.InvariantCulture,
+                DateTimeStyles.RoundtripKind,
+                out var instant))
+        {
+            return startsAtUtc;
+        }
+
+        try
+        {
+            return TimeZoneInfo.ConvertTime(instant, TimeZoneInfo.FindSystemTimeZoneById(timeZoneId))
+                .ToString("yyyy年M月d日", CultureInfo.GetCultureInfo("ja-JP"));
+        }
+        catch (TimeZoneNotFoundException)
+        {
+            return instant.ToString("yyyy年M月d日", CultureInfo.GetCultureInfo("ja-JP"));
+        }
+    }
+}
