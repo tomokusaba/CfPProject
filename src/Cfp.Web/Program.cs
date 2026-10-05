@@ -32,6 +32,7 @@ if (authentication.IsConfigured)
 }
 else
 {
+    builder.Services.AddAuthorizationCore();
     builder.Services.AddScoped<AuthenticationStateProvider, AnonymousAuthenticationStateProvider>();
 }
 
